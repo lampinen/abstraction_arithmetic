@@ -53,6 +53,8 @@ def build_dataset(max_int=100,
                             "4^3", "2^5", "8^2", "9^1", "1^11"]):
     dataset = {}
     dataset["operations"] = ["number", "addition", "multiplication", "exponentiation"] 
+    dataset["vocab_dict"] = VOCAB
+    dataset["inv_vocab_dict"] = INV_VOCAB
     dataset["train"] = {"inputs": [], "targets": [], "operation": [], "evl_or_exp": []}
     dataset["test"] = {"inputs": [], "targets": [], "operation": [], "evl_or_exp": []}
 
@@ -151,6 +153,11 @@ def build_dataset(max_int=100,
                                              dtype=np.int32)
         dataset[subset]["targets"] = np.array([back_pad_and_eos(x, out_seq_len) for x in dataset[subset]["targets"]],
                                               dtype=np.int32)
+        dataset[subset]["masks"] = np.zeros(
+            shape=dataset[subset]["targets"].shape,
+            dtype=np.bool)
+        for point_i in range(len(dataset[subset]["masks"])):
+            dataset[subset]["masks"][point_i, :(np.argmax(np.equal(dataset[subset]["targets"][point_i, :], eos_token)) + 1)] = True
 
         dataset[subset]["operation"] = np.array(dataset[subset]["operation"])
         dataset[subset]["evl_or_exp"] = np.array(dataset[subset]["evl_or_exp"])
@@ -166,6 +173,14 @@ def build_dataset(max_int=100,
             if np.any(combined):
                 dataset["test"]["test_subsets"][operation + "_" + evl_or_exp] = combined
 
+    
+    # shuffle train
+    train_perm = np.random.permutation(len(dataset["train"]["operation"]))
+    dataset["train"]["inputs"] = dataset["train"]["inputs"][train_perm, :] 
+    dataset["train"]["targets"] = dataset["train"]["targets"][train_perm, :] 
+    dataset["train"]["operation"] = dataset["train"]["operation"][train_perm] 
+    dataset["train"]["evl_or_exp"] = dataset["train"]["evl_or_exp"][train_perm] 
+    
 
     return dataset
 
