@@ -149,7 +149,7 @@ def build_dataset(max_int=100,
     dataset["out_seq_len"] = out_seq_len
 
     for subset in ["train", "test"]:
-        dataset[subset]["inputs"] = np.array([front_pad_and_eos(x, in_seq_len) for x in dataset[subset]["inputs"]],
+        dataset[subset]["inputs"] = np.array([back_pad_and_eos(x, in_seq_len) for x in dataset[subset]["inputs"]],
                                              dtype=np.int32)
         dataset[subset]["targets"] = np.array([back_pad_and_eos(x, out_seq_len) for x in dataset[subset]["targets"]],
                                               dtype=np.int32)
@@ -190,4 +190,6 @@ if __name__ == "__main__":
     print(arithmetic_expander("3"))
     print(arithmetic_expander("4^2"))
     print(arithmetic_expander("6^3"))
-    print(build_dataset())
+    x = build_dataset()
+    print(x)
+    print(len(x["train"]["inputs"]))
