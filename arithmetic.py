@@ -178,6 +178,7 @@ def build_dataset(max_int=100,
     train_perm = np.random.permutation(len(dataset["train"]["operation"]))
     dataset["train"]["inputs"] = dataset["train"]["inputs"][train_perm, :] 
     dataset["train"]["targets"] = dataset["train"]["targets"][train_perm, :] 
+    dataset["train"]["masks"] = dataset["train"]["masks"][train_perm, :] 
     dataset["train"]["operation"] = dataset["train"]["operation"][train_perm] 
     dataset["train"]["evl_or_exp"] = dataset["train"]["evl_or_exp"][train_perm] 
 
