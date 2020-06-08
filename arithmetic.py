@@ -180,6 +180,18 @@ def build_dataset(max_int=100,
     dataset["train"]["targets"] = dataset["train"]["targets"][train_perm, :] 
     dataset["train"]["operation"] = dataset["train"]["operation"][train_perm] 
     dataset["train"]["evl_or_exp"] = dataset["train"]["evl_or_exp"][train_perm] 
+
+    # train subsets
+    dataset["train"]["train_subsets"] = {} 
+    for operation in dataset["operations"]:
+        operation_key = dataset["train"]["operation"] == operation
+        dataset["train"]["train_subsets"][operation] = operation_key 
+        for evl_or_exp in ["evaluate", "expand"]:
+            e_o_e_key = dataset["train"]["evl_or_exp"] == evl_or_exp 
+
+            combined = np.logical_and(operation_key, e_o_e_key)
+            if np.any(combined):
+                dataset["train"]["train_subsets"][operation + "_" + evl_or_exp] = combined
     
 
     return dataset
