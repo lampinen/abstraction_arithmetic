@@ -276,6 +276,8 @@ if __name__ == "__main__":
         if condition != "full_train":
             if condition == "evaluate_only": 
                 dataset["train"] = filter_dataset(dataset["train"], dataset["train"]["subsets"]["evaluate"])
+            elif condition == "exp_evaluate_only": 
+                dataset["train"] = filter_dataset(dataset["train"], dataset["train"]["subsets"]["exponentiation_evaluate"])
             else:
                 raise ValueError("Unrecognized condition: {}".format(condition))
         num_train = len(dataset["train"]["inputs"])
