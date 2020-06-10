@@ -133,12 +133,12 @@ def build_dataset(max_int=100,
                 subset = "train"
             in_enc = encode(in_str)
             dataset[subset]["inputs"].append([evl_token] + in_enc)
-            dataset[subset]["targets"].append(encode(str(x*y)))
+            dataset[subset]["targets"].append([evl_token] + encode(str(x*y)))
             dataset[subset]["operation"].append("exponentiation")
             dataset[subset]["evl_or_exp"].append("evaluate")
             if y <= max_rep_int:
                 dataset[subset]["inputs"].append([exp_token] + in_enc)
-                dataset[subset]["targets"].append(encode(arithmetic_expander(in_str)))
+                dataset[subset]["targets"].append([exp_token] + encode(arithmetic_expander(in_str)))
                 dataset[subset]["operation"].append("exponentiation")
                 dataset[subset]["evl_or_exp"].append("expand")
 
@@ -163,7 +163,7 @@ def build_dataset(max_int=100,
         dataset[subset]["evl_or_exp"] = np.array(dataset[subset]["evl_or_exp"])
 
     # test subsets
-    dataset["test"]["test_subsets"] = {} 
+    dataset["test"]["subsets"] = {} 
     for operation in dataset["operations"]:
         operation_key = dataset["test"]["operation"] == operation
         for evl_or_exp in ["evaluate", "expand"]:
@@ -171,7 +171,10 @@ def build_dataset(max_int=100,
 
             combined = np.logical_and(operation_key, e_o_e_key)
             if np.any(combined):
-                dataset["test"]["test_subsets"][operation + "_" + evl_or_exp] = combined
+                dataset["test"]["subsets"][operation + "_" + evl_or_exp] = combined
+    for evl_or_exp in ["evaluate", "expand"]:
+        e_o_e_key = dataset["test"]["evl_or_exp"] == evl_or_exp 
+        dataset["test"]["subsets"][evl_or_exp] = e_o_e_key
 
     
     # shuffle train
@@ -183,18 +186,21 @@ def build_dataset(max_int=100,
     dataset["train"]["evl_or_exp"] = dataset["train"]["evl_or_exp"][train_perm] 
 
     # train subsets
-    dataset["train"]["train_subsets"] = {} 
+    dataset["train"]["subsets"] = {} 
     for operation in dataset["operations"]:
         operation_key = dataset["train"]["operation"] == operation
-        dataset["train"]["train_subsets"][operation] = operation_key 
+        dataset["train"]["subsets"][operation] = operation_key 
         for evl_or_exp in ["evaluate", "expand"]:
             e_o_e_key = dataset["train"]["evl_or_exp"] == evl_or_exp 
 
             combined = np.logical_and(operation_key, e_o_e_key)
             if np.any(combined):
-                dataset["train"]["train_subsets"][operation + "_" + evl_or_exp] = combined
-    
-
+                dataset["train"]["subsets"][operation + "_" + evl_or_exp] = combined
+        operation_key = dataset["train"]["operation"] == operation
+    for evl_or_exp in ["evaluate", "expand"]:
+        e_o_e_key = dataset["train"]["evl_or_exp"] == evl_or_exp 
+        dataset["train"]["subsets"][evl_or_exp] = e_o_e_key
+#
     return dataset
 
 if __name__ == "__main__":
