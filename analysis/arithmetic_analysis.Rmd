@@ -1,0 +1,79 @@
+---
+title: "Arithmetic abstraction analysis"
+author: "Andrew Lampinen"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+theme_set(theme_classic())
+```
+
+# data loading
+
+```{r}
+data_path = "./data/"
+file_list = list.files(data_path, pattern="accuracies")
+d = replicate(length(file_list), data.frame())
+
+i = 1
+for (f in file_list) {
+   this_d = read.csv(paste(data_path, f, sep=""))
+   this_d$filename = f
+   d[[i]] = this_d
+   i = i + 1
+}
+d = bind_rows(d)
+```
+
+```{r}
+d = d %>%
+  pivot_longer(-c(epoch, filename), names_to="metric_and_difficulty", values_to="value") %>%
+  mutate(metric=str_extract(metric_and_difficulty, "(hard|soft)_accuracy"),
+         dataset=gsub("_(hard|soft)_accuracy", "", metric_and_difficulty),
+         condition = str_extract(filename, "(?<=condition_)[a-z_]+(?=_run)"),
+         run = as.numeric(str_extract(filename, "(?<=run_)[0-9]+")))
+  
+```
+
+# basic plots
+
+
+```{r}
+ggplot(d %>%
+         group_by(condition, run, dataset, metric) %>%
+         summarize(max_accuracy=max(value)),
+       aes(x=dataset, y=max_accuracy, fill=condition)) +
+  facet_grid(~metric, scales="free") +
+  geom_bar(stat="summary", fun.y="mean", position=position_dodge()) +
+  geom_linerange(stat="summary", fun.y="mean_cl_boot", position=position_dodge(width=0.9)) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+
+```
+
+```{r}
+ggplot(d %>%
+         filter(dataset %in% c("train", "test_multiplication_evaluate", "test_exponentiation_evaluate"),
+                metric == "hard_accuracy") %>%
+         group_by(condition, run, dataset, metric) %>%
+         summarize(max_accuracy=max(value)),
+       aes(x=dataset, y=max_accuracy, fill=condition)) +
+  facet_grid(~metric, scales="free") +
+  geom_bar(stat="summary", fun.y="mean", position=position_dodge()) +
+  geom_linerange(stat="summary", fun.y="mean_cl_boot", position=position_dodge(width=0.9)) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+
+```
+
+```{r}
+ggplot(d %>%
+         filter(dataset %in% c("train", "test_multiplication_evaluate", "test_exponentiation_evaluate"),
+                metric == "hard_accuracy"),
+       aes(x=epoch, y=value, color=condition, group=interaction(condition, dataset, run, metric))) +
+  facet_grid(~ dataset, scales="free") +
+  geom_line() 
+
+```
