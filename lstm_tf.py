@@ -254,7 +254,7 @@ def filter_dataset(dataset, key):
 
 
 if __name__ == "__main__":
-    condition = "full_train"
+    condition = "exp_only"
     run_offset = 0
     num_runs = 2
     for run_i in range(run_offset, run_offset + num_runs):
@@ -278,6 +278,12 @@ if __name__ == "__main__":
                 dataset["train"] = filter_dataset(dataset["train"], dataset["train"]["subsets"]["evaluate"])
             elif condition == "exp_evaluate_only": 
                 dataset["train"] = filter_dataset(dataset["train"], dataset["train"]["subsets"]["exponentiation_evaluate"])
+            elif condition == "exp_only": 
+                dataset["train"] = filter_dataset(dataset["train"], dataset["train"]["subsets"]["exponentiation"])
+            elif condition == "mult_evaluate_only": 
+                dataset["train"] = filter_dataset(dataset["train"], dataset["train"]["subsets"]["multiplication_evaluate"])
+            elif condition == "mult_only": 
+                dataset["train"] = filter_dataset(dataset["train"], dataset["train"]["subsets"]["multiplication"])
             else:
                 raise ValueError("Unrecognized condition: {}".format(condition))
         num_train = len(dataset["train"]["inputs"])
