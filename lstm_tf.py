@@ -5,6 +5,8 @@ import tensorflow.contrib.slim as slim
 
 import arithmetic
 
+from utils import save_config
+
 class lstm_seq2seq_model(object):
     def __init__(self, config): 
         self.config = config
@@ -21,14 +23,7 @@ class lstm_seq2seq_model(object):
                 os.makedirs(output_dir)
             self.output_filename = output_dir + filename_prefix + "accuracies.csv" 
             config_filename = output_dir + filename_prefix + "config.csv"
-            self.save_config(config_filename, config)
-
-    def save_config(self, filename, config):
-        with open(filename, "w") as fout:
-            fout.write("key, value\n")
-            keys = sorted(config.keys())
-            for key in keys:
-                fout.write(key + ", " + str(config[key]) + "\n")
+            save_config(config_filename, config)
 
     def _build_architecture(self):
         internal_nonlinearity = tf.nn.leaky_relu
@@ -254,9 +249,9 @@ def filter_dataset(dataset, key):
 
 
 if __name__ == "__main__":
-    condition = "exp_only"
-    run_offset = 0
-    num_runs = 2
+    condition = "mult_only"
+    run_offset = 5
+    num_runs = 5
     for run_i in range(run_offset, run_offset + num_runs):
         config = {
             "num_layers": 3,  # number of layers in each lstm
