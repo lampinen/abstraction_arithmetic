@@ -127,6 +127,8 @@ def build_dataset(max_int=100,
         for y in range(max_int):
             if x ** y >= max_int:
                 break
+            if x == 0 and y == 0:
+                continue
             in_str = str(x) + "^" + str(y)
             if in_str in holdouts:
                 subset = "test"

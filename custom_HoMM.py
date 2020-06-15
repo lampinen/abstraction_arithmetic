@@ -120,6 +120,8 @@ class arithmetic_HoMM(object):
         dimensionality = self.config["dimensionality"]
 
         #### Shared placeholders
+        self.task_ph = tf.placeholder(
+            tf.int32)  # only one task at a time
         self.input_ph = tf.placeholder(
             tf.int32, shape=[None, self.config["in_seq_len"]])
         self.lr_ph = tf.placeholder(tf.float32)
@@ -150,7 +152,13 @@ class arithmetic_HoMM(object):
         self.expand_output_targets_mask_ph = tf.placeholder(
             tf.bool, shape=[None, self.config["expand_seq_len"],
                             self.config["out_seq_len"]])
-
-
+            
+        #### Meta-placeholders
+        self.meta_input_ph = tf.placeholder(
+            tf.int32, shape=[None, 1])
+        self.meta_target_ph = tf.placeholder(
+            tf.int32, shape=[None, 1])
+        self.feed_embedding_ph = tf.placeholder(
+            tf.float32, shape=[None, dimensionality])
 
  	
