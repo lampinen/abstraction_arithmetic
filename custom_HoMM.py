@@ -214,7 +214,12 @@ class arithmetic_HoMM(object):
 
         self.curr_task_embedding = tf.nn.embedding_lookup(self.task_embeddings, 
                                                           self.task_ph)
+        
+        meta_input_embeddings = tf.nn.embedding_lookup(self.task_embeddings,
+                                                       self.meta_input_ph)
 
+        meta_target_embeddings = tf.nn.embedding_lookup(self.task_embeddings,
+                                                       self.meta_target_ph)
 
         #### Hyper network
         F_num_hidden = config["F_num_hidden"]
@@ -313,11 +318,11 @@ class arithmetic_HoMM(object):
                 return hidden_weights, hidden_biases
 
         if not config["task_conditioned_not_hyper"]:  
-            self.base_task_params = hyper_network(self.curr_task_embedding,
+            self.curr_task_params = hyper_network(self.curr_task_embedding,
                                                   reuse=False)
+            self.fed_emb_task_params = hyper_network(self.feed_embedding_ph)
 
         #### task network F: Z -> Z
-
 
         if config["task_conditioned_not_hyper"]:  
             # control where instead of hyper network, just condition task net
@@ -328,7 +333,7 @@ class arithmetic_HoMM(object):
                     task_hidden = tf.concat([task_reps, processed_input],
                                             axis=-1)
                     for _ in range(config["F_num_hidden_layers"]):
-                        task_hidden = slim.fully_connected(task_hidden, num_hidden_F,
+                        task_hidden = slim.fully_connected(task_hidden, F_num_hidden,
                                                            activation_fn=internal_nonlinearity)
 
                     raw_output = slim.fully_connected(task_hidden, dimensionality,
@@ -336,9 +341,11 @@ class arithmetic_HoMM(object):
 
                 return raw_output
 
-            self.base_eval_output_emb = task_network(self.base_combined_emb,
+            self.base_eval_output_emb = task_network(self.curr_task_embedding,
                                                      self.processed_inputs,
                                                      reuse=False)
+            self.base_fed_eval_output_emb = task_network(self.feed_embedding_ph,
+                                                         self.processed_inputs)
         else: 
             # hyper-network-parameterized rather than fixed + task conditioned
             # (this is the default)
@@ -353,8 +360,12 @@ class arithmetic_HoMM(object):
 
                 return raw_output
 
-            self.base_eval_output_emb = task_network(self.base_task_params,
+            self.base_eval_output_emb = task_network(self.curr_task_params,
                                                      self.processed_inputs)
+            self.base_fed_eval_output_emb = task_network(self.fed_emb_task_params,
+                                                         self.processed_inputs)
+            self.meta_map_output_embs = task_network(self.curr_task_params,
+                                                     meta_input_embeddings)
 
         #### language output
         self.base_eval_output = LSTM_decoder(
@@ -365,7 +376,20 @@ class arithmetic_HoMM(object):
                     "seq_len": config["out_seq_len"]},
             scope="decoder", reuse=False)  
         print(self.base_eval_output)
+        self.base_fed_eval_output = LSTM_decoder(
+            self.base_fed_eval_output_emb, 
+            config={"dimensionality": dimensionality,
+                    "num_layers": config["num_decoder_layers"],
+                    "vocab_size": self.vocab_size,
+                    "seq_len": config["out_seq_len"]},
+            scope="decoder")  
 
+
+        #### Expander core
+        #### This recurrent net will take a task embedding and task input,
+        #### and decode a sequence of steps each of which consist of sub-task
+        #### embeddings and inputs, which are then executed to yield the next
+        #### expander input.
 
 
 
@@ -380,6 +404,22 @@ class arithmetic_HoMM(object):
 
         self.total_base_eval_loss = tf.reduce_mean(
             tf.reduce_mean(self.base_eval_masked_loss, axis=-1))
+
+        self.base_fed_eval_loss = tf.nn.softmax_cross_entropy_with_logits(
+            labels=oh_eval_target, logits=self.base_fed_eval_output)
+
+        self.base_fed_eval_masked_loss = tf.where(
+            self.eval_mask_ph, 
+            self.base_fed_eval_loss, 
+            tf.zeros_like(self.base_fed_eval_loss))
+
+        self.total_base_fed_eval_loss = tf.reduce_mean(
+            tf.reduce_mean(self.base_fed_eval_masked_loss, axis=-1))
+
+        # meta
+        self.meta_map_loss = tf.reduce_mean(tf.square(self.meta_map_output_embs - meta_target_embeddings))
+
+        #### optimizer and training
 
         if self.config["optimizer"] == "Adam":
             self.optimizer = tf.train.AdamOptimizer(self.lr_ph)
