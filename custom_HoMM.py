@@ -42,9 +42,10 @@ def LSTM_encoder(input_sequence, config, scope="encoder", reuse=True):
             this_input = input_sequence[:, i, :]
             cell_output, state = stacked_cell(this_input, state)
 
-            processed_output = slim.fully_connected(
-                cell_output, dimensionality,
-                activation_fn=None)
+            with tf.variable_scope("encoder_fc", reuse=reuse or i > 0): 
+                processed_output = slim.fully_connected(
+                    cell_output, dimensionality,
+                    activation_fn=None)
             processed_outputs.append(processed_output)
 
     return state, processed_outputs
@@ -86,9 +87,11 @@ def LSTM_decoder(state_input_embeddings, config, scope="decoder", reuse=True):
         for i in range(seq_len):
             cell_output, state = stacked_cell(this_input, state)
 
-            this_output_logits = slim.fully_connected(
-                cell_output, vocab_size,
-                activation_fn=None)
+
+            with tf.variable_scope("decoder_fc", reuse=reuse or i > 0): 
+                this_output_logits = slim.fully_connected(
+                    cell_output, vocab_size,
+                    activation_fn=None)
             output_logits.append(this_output_logits)
 
             greedy_output = tf.argmax(this_output_logits, axis=-1)
@@ -390,7 +393,7 @@ class arithmetic_HoMM(object):
         #### and decode a sequence of steps each of which consist of sub-task
         #### embeddings and inputs, which are then executed to yield the next
         #### expander input.
-
+        
 
 
         #### losses
