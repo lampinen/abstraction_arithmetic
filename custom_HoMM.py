@@ -13,6 +13,8 @@ import warnings
 import default_config
 from utils import save_config
 
+import arithmetic_for_homm
+
 
 def get_word_embeddings(inputs, vocab_size, dimensionality, reuse=True):
     with tf.variable_scope("word_embeddings", reuse=reuse):
@@ -129,6 +131,7 @@ class arithmetic_HoMM(object):
         self.current_lr = config["init_learning_rate"]
 
         self.output_filename = None
+        self.batch_size = config["batch_size"]
         if config["output_dir"] is not None:
             output_dir = config["output_dir"]
             filename_prefix = config["filename_prefix"]
@@ -429,7 +432,7 @@ class arithmetic_HoMM(object):
             seq_len = recurrent_config["seq_len"]
             batch_size = tf.shape(processed_input)[0]
 
-            # will probably have to tile task embedding b/c no broadcasting 
+            task_embedding = tf.tile(task_embedding, multiples=[batch_size, 1])
             full_input_embeddings = tf.concat([task_embedding, processed_input],
                                                axis=-1)
 
@@ -463,9 +466,13 @@ class arithmetic_HoMM(object):
                     this_step_output_emb = task_network(this_step_function_emb,
                                                         this_step_input_emb)
                 else:
-                    this_step_task_params = hyper_network(this_step_function_emb)
-                    this_step_output_emb = task_network(this_step_task_params,
-                                                        this_step_input_emb)
+                    this_step_output_emb = tf.map_fn(
+                        lambda x: task_network(
+                            hyper_network(tf.expand_dims(x[0], axis=0)), 
+                            tf.expand_dims(x[1], axis=0)),
+                        (this_step_function_emb, this_step_input_emb),
+                        dtype=tf.float32)
+                    this_step_output_emb = tf.squeeze(this_step_output_emb, axis=1)
 
                 step_output_embs.append(this_step_output_emb)
 
@@ -548,6 +555,10 @@ class arithmetic_HoMM(object):
 
         fun_loss_weight = config["expand_function_loss_weight"]
         self.total_expand_loss = self.total_expand_input_loss + fun_loss_weight * self.total_expand_fun_loss + self.total_expand_output_loss
+        self.all_expand_losses = {"expand_total_loss": self.total_expand_loss, 
+                                  "expand_input_loss": self.total_expand_input_loss,
+                                  "expand_function_loss": self.total_expand_fun_loss,
+                                  "expand_output_loss": self.total_expand_output_loss}
 
         self.expand_fed_input_loss = masked_xe_loss(logits=expander_input_outputs,
                                                     targets=oh_exp_in_target,
@@ -588,9 +599,9 @@ class arithmetic_HoMM(object):
         # guessing them zero-shot, to show the improved efficiency of learning
         # from a good guess at the solution.
         self.optimize_evaluate_op = self.optimizer.minimize(self.total_base_eval_loss,
-							    var_list=[self.task_embeddings])
+                                                            var_list=[self.task_embeddings])
         self.optimize_expand_op = self.optimizer.minimize(self.total_expand_loss,
-							  var_list=[self.task_embeddings])
+                                                          var_list=[self.task_embeddings])
 
     def _sess_and_init(self):
         # Saver
@@ -616,13 +627,13 @@ class arithmetic_HoMM(object):
         feed_dict = {}
         feed_dict[self.input_ph] = inputs
         if task_id is None:
-            if fed_embedding is None:
+            if feed_embedding is None:
                 raise ValueError("You must supply a task id or embedding!")
             feed_dict[self.feed_embedding_ph] = feed_embedding 
         else:
-            if fed_embedding is not None:
+            if feed_embedding is not None:
                 raise ValueError("You must supply either a task id or embedding, not both.")
-            feed_dict[self.task_ph] = np.array(task_id)
+            feed_dict[self.task_ph] = np.array([task_id])
         if targets is not None: 
             if target_masks is None:
                 raise ValueError("Masks must be provided for targets.")
@@ -644,13 +655,13 @@ class arithmetic_HoMM(object):
         feed_dict[self.input_ph] = inputs
 
         if task_id is None:
-            if fed_embedding is None:
+            if feed_embedding is None:
                 raise ValueError("You must supply a task id or embedding!")
             feed_dict[self.feed_embedding_ph] = feed_embedding 
         else:
-            if fed_embedding is not None:
+            if feed_embedding is not None:
                 raise ValueError("You must supply either a task id or embedding, not both.")
-            feed_dict[self.task_ph] = np.array(task_id)
+            feed_dict[self.task_ph] = np.array([task_id])
 
         targets_and_masks = [in_targets, in_target_masks, out_targets,
                              out_target_masks, fun_targets, fun_target_masks]
@@ -659,11 +670,11 @@ class arithmetic_HoMM(object):
             if not all(tam_not_none): 
                 raise ValueError("All targets and masks must be provided together.")
             feed_dict[self.expand_input_targets_ph] = in_targets
-            feed_dict[self.expand_input_target_masks_ph] = in_target_masks
+            feed_dict[self.expand_input_targets_mask_ph] = in_target_masks
             feed_dict[self.expand_function_targets_ph] = fun_targets
-            feed_dict[self.expand_function_target_masks_ph] = fun_target_masks
+            feed_dict[self.expand_function_targets_mask_ph] = fun_target_masks
             feed_dict[self.expand_output_targets_ph] = out_targets
-            feed_dict[self.expand_output_target_masks_ph] = out_target_masks
+            feed_dict[self.expand_output_targets_mask_ph] = out_target_masks
 
         if call_type == "train": 
             feed_dict[self.lr_ph] = self.curr_lr
@@ -684,7 +695,88 @@ class arithmetic_HoMM(object):
 
         return feed_dict
 
-        
+    def base_eval(self, fun_dataset):
+        results = {"expand": {}, "evaluate": {}}
+        # evaluate eval
+        batch_size = self.batch_size
+        for subset_name, subset in fun_dataset["evaluate"].items():
+            results["evaluate"][subset_name] = {"total_evaluate_loss": 0.}
+            num_points = subset["input"].shape[0]
+            num_batches = int(np.ceil(num_points / batch_size))
+            evaluate_loss = 0.
+            for batch_i in range(num_batches):
+                feed_dict = self.build_evaluate_feed_dict(
+                    inputs=subset["input"][batch_i * batch_size:(batch_i + 1) * batch_size],
+                    task_id=subset["task"],
+                    targets=subset["eval_target"][batch_i * batch_size:(batch_i + 1) * batch_size],
+                    target_masks=subset["eval_mask"][batch_i * batch_size:(batch_i + 1) * batch_size],
+                    call_type="eval")  
+                this_losses = self.sess.run(self.total_base_eval_loss,
+                                            feed_dict=feed_dict)
+                results["evaluate"][subset_name]["total_evaluate_loss"] += this_losses
+            for (k, v) in results["evaluate"][subset_name].items():
+                results["evaluate"][subset_name][k] = v / num_batches
+                 
+        # expand eval
+        if fun_dataset["expand"] is not None:
+            for subset_name, subset in fun_dataset["expand"].items():
+                results["expand"][subset_name] = {k: 0. for k in self.all_expand_losses.keys()}
+                num_points = subset["input"].shape[0]
+                num_batches = int(np.ceil(num_points / batch_size))
+                expand_loss = 0.
+                for batch_i in range(num_batches):
+                    feed_dict = self.build_expand_feed_dict(
+                        inputs=subset["input"][batch_i * batch_size:(batch_i + 1) * batch_size],
+                        task_id=subset["task"],
+                        in_targets=subset["exp_in_targs"][batch_i * batch_size:(batch_i + 1) * batch_size],
+                        in_target_masks=subset["exp_in_targ_masks"][batch_i * batch_size:(batch_i + 1) * batch_size],
+                        fun_targets=subset["exp_fun_targs"][batch_i * batch_size:(batch_i + 1) * batch_size],
+                        fun_target_masks=subset["exp_fun_targ_masks"][batch_i * batch_size:(batch_i + 1) * batch_size],
+                        out_targets=subset["exp_out_targs"][batch_i * batch_size:(batch_i + 1) * batch_size],
+                        out_target_masks=subset["exp_out_targ_masks"][batch_i * batch_size:(batch_i + 1) * batch_size],
+                        call_type="eval")  
+                    this_losses = self.sess.run(self.all_expand_losses,
+                                                feed_dict=feed_dict)
+                    for k in self.all_expand_losses.keys():
+                        results["expand"][subset_name][k] += this_losses[k]
+                for (k, v) in results["expand"][subset_name].items():
+                    results["expand"][subset_name][k] = v / num_batches
+        return results
+
+    def meta_eval(self, dataset):
+        pass
+    
+    def do_eval(self, dataset, epoch):
+        results = {}
+        for fun in self.functions:
+            fun_str = arithmetic_for_homm.FUNCTION_STRINGS[fun]
+            if fun in self.operations:  # operation
+                results[fun_str] = self.base_eval(dataset[fun])
+            else:  # meta
+                results[fun_str] = self.meta_eval(dataset[fun])
+            print(fun_str)
+            print(results[fun_str])
+
+    def run_training(self, dataset):
+        self.operations = dataset["operations"]
+        self.functions = dataset["functions"]
+        self.do_eval(dataset, epoch=0)
+    
+ 
 
 if __name__ == "__main__":
-    model = arithmetic_HoMM(config=default_config.default_config) 
+    run_i = 0
+    dataset = arithmetic_for_homm.build_dataset(random_seed=run_i)
+    this_config = default_config.default_config
+    this_config.update({
+        "num_symbols": len(dataset["vocab_dict"]),
+        "num_functions": len(dataset["functions"]),
+        "in_seq_len": dataset["in_seq_len"],
+        "out_seq_len": dataset["out_seq_len"],
+        "expand_seq_len": dataset["expand_seq_len"],
+        "output_dir": None,
+        "filename_prefix": "run{}_".format(run_i) 
+    })
+    model = arithmetic_HoMM(config=this_config) 
+    model.run_training(dataset=dataset)
+     
