@@ -2,6 +2,13 @@ import numpy as np
 
 
 FUNCTIONS = ["n", "s", "+", "*", "^"] + ["up"]
+FUNCTION_STRINGS = {  # for writing to files
+    "n": "number", 
+    "s": "successor",
+    "+": "addition",
+    "*": "multiplication",
+    "^": "exponentiation",
+    "up": "up"}
 VOCAB =  [str(x) for x in range(10)] + FUNCTIONS + ["<EOS>", "<PAD>"]
 VOCAB = {x: i for (i, x) in enumerate(VOCAB)}
 FUNCTION_IDS = {x: i for (i, x) in enumerate(FUNCTIONS)}
@@ -254,6 +261,7 @@ def build_dataset(max_int=100,
     out_seq_len = in_seq_len  # have to be equal, because sometimes inputs are outputs 
     dataset["in_seq_len"] = in_seq_len
     dataset["out_seq_len"] = out_seq_len
+    dataset["expand_seq_len"] = max_rep_int 
 
     for op in dataset["operations"]:
         for subset in ["train", "test"]:

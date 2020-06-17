@@ -11,7 +11,7 @@ import tensorflow.contrib.slim as slim
 import warnings
 
 import default_config
-from utils import save_config
+from utils import save_config, untree_dicts
 
 import arithmetic_for_homm
 
@@ -754,9 +754,13 @@ class arithmetic_HoMM(object):
                 results[fun_str] = self.base_eval(dataset[fun])
             else:  # meta
                 results[fun_str] = self.meta_eval(dataset[fun])
-            print(fun_str)
-            print(results[fun_str])
-
+        results = untree_dicts(results)
+        print(results)
+        if epoch == 0:
+            pass
+        
+        results["epoch"] = epoch
+        
     def run_training(self, dataset):
         self.operations = dataset["operations"]
         self.functions = dataset["functions"]

@@ -19,7 +19,7 @@ default_config = {
                                      # network
     
     "F_num_hidden_layers": 3,  # task network num hidden layers
-    "F_num_hidden": 128,  # task network hidden units
+    "F_num_hidden": 64,  # task network hidden units
     
     "F_weight_normalization": False,  # if True, weight vectors in task network
                                       # will be normalized to unit length --
@@ -49,6 +49,8 @@ default_config = {
     "optimizer": "Adam",  # Adam or RMSProp are supported options
     "num_epochs": 10000,  # number of training epochs
     "eval_every": 20,  # how many epochs between evals
+
+    "batch_size": 20,
 
     "num_runs": 5, # number of independent runs of the network to complete
 
