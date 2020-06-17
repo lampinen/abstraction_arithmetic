@@ -101,6 +101,15 @@ def LSTM_decoder(state_input_embeddings, config, scope="decoder", reuse=True):
     return output_logits
 
 
+def masked_xe_loss(logits, targets, mask):
+    unmasked_loss = tf.nn.softmax_cross_entropy_with_logits(
+        labels=targets, logits=logits)
+    masked_loss = tf.where(mask, unmasked_loss,
+                           tf.zeros_like(unmasked_loss))
+
+    return masked_loss
+
+
 class arithmetic_HoMM(object):
     def __init__(self, config):
         self.config = config
@@ -180,8 +189,6 @@ class arithmetic_HoMM(object):
 
         oh_exp_in_target = tf.one_hot(self.expand_input_targets_ph,
                                       depth=self.vocab_size)
-        oh_exp_fun_target = tf.one_hot(self.expand_function_targets_ph,
-                                       depth=self.vocab_size)
         oh_exp_out_target = tf.one_hot(self.expand_output_targets_ph,
                                        depth=self.vocab_size)
 
@@ -222,7 +229,10 @@ class arithmetic_HoMM(object):
                                                        self.meta_input_ph)
 
         meta_target_embeddings = tf.nn.embedding_lookup(self.task_embeddings,
-                                                       self.meta_target_ph)
+                                                        self.meta_target_ph)
+
+        exp_fun_targets = tf.nn.embedding_lookup(self.task_embeddings,
+                                                 self.expand_function_targets_ph)
 
         #### Hyper network
         F_num_hidden = config["F_num_hidden"]
@@ -394,12 +404,13 @@ class arithmetic_HoMM(object):
         #### embeddings and inputs, which are then executed to yield the next
         #### expander input.
 
-        def expander(task_embedding, processed_input, config, scope="decoder", reuse=True):
+        def expander(task_embedding, processed_input, recurrent_config, scope="expander",
+                     reuse=True):
             """config should be dict containing dimensionality, num_layers, and
             seq_length"""
-            dimensionality = config["dimensionality"]
-            num_lstm_layers = config["num_layers"]
-            seq_len = config["seq_len"]
+            dimensionality = recurrent_config["dimensionality"]
+            num_lstm_layers = recurrent_config["num_layers"]
+            seq_len = recurrent_config["seq_len"]
             batch_size = tf.shape(processed_input)[0]
 
             # will probably have to tile task embedding b/c no broadcasting 
@@ -414,11 +425,12 @@ class arithmetic_HoMM(object):
                 state = input_embeddings_to_LSTM_state(
                     full_input_embeddings, num_lstm_layers, dimensionality, reuse=reuse)
 
-                this_input = tf.zeros([batch_size, dimensionality])
-                step_function_embs = []
-                step_input_embs = []
-                step_outputs = []
-                for i in range(seq_len):
+            this_input = tf.zeros([batch_size, dimensionality])
+            step_function_embs = []
+            step_input_embs = []
+            step_output_embs = []
+            for i in range(seq_len):
+                with tf.variable_scope(scope, reuse=reuse):
                     cell_output, state = stacked_cell(this_input, state)
                     with tf.variable_scope("function_fc", reuse=reuse or i > 0): 
                         this_step_function_emb = slim.fully_connected(
@@ -426,45 +438,88 @@ class arithmetic_HoMM(object):
                             activation_fn=None)
                     step_function_embs.append(this_step_function_emb)
                     with tf.variable_scope("input_fc", reuse=reuse or i > 0): 
-                        this_setp_input_emb = slim.fully_connected(
+                        this_step_input_emb = slim.fully_connected(
                             cell_output, dimensionality,
                             activation_fn=None)
                     step_input_embs.append(this_step_input_emb)
 
-                    this_step_task_params = hyper_network(this_function_emb)
+                if config["task_conditioned_not_hyper"]:  
+                    this_step_output_emb = task_network(this_step_function_emb,
+                                                        this_step_input_emb)
+                else:
+                    this_step_task_params = hyper_network(this_step_function_emb)
                     this_step_output_emb = task_network(this_step_task_params,
-                                                        this_input_embs)
+                                                        this_step_input_emb)
 
-                    this_input = 
+                step_output_embs.append(this_step_output_emb)
 
-            output_logits = tf.stack(output_logits, axis=1)
-            return output_logits
+                this_input = this_step_output_emb 
+
+            step_input_embs = tf.stack(step_input_embs, axis=1)
+            step_function_embs = tf.stack(step_function_embs, axis=1)
+            step_output_embs = tf.stack(step_output_embs, axis=1)
+            return step_input_embs, step_function_embs, step_output_embs
+
+        (expander_input_embs,
+         expander_function_embs,
+         expander_output_embs) = expander(
+            self.curr_task_embedding, self.processed_inputs, 
+            recurrent_config={"dimensionality": dimensionality,
+                              "num_layers": config["num_expander_layers"],
+                              "seq_len": config["expand_seq_len"]},
+            reuse=False)
+
+        # decode from expander I/O embs using decoder shared w/ evaluation
+        def do_expander_decoding(embs):
+           return tf.map_fn(
+            lambda emb: LSTM_decoder(
+                emb, 
+                config={"dimensionality": dimensionality,
+                        "num_layers": config["num_decoder_layers"],
+                        "vocab_size": self.vocab_size,
+                        "seq_len": config["out_seq_len"]},
+                scope="decoder"),
+            embs)
+
+        expander_input_outputs = do_expander_decoding(expander_input_embs) 
+        expander_output_outputs = do_expander_decoding(expander_output_embs) 
+
+        (expander_fed_input_embs,
+         expander_fed_function_embs,
+         expander_fed_output_embs) = expander(
+            self.feed_embedding_ph, self.processed_inputs, 
+            recurrent_config={"dimensionality": dimensionality,
+                              "num_layers": config["num_expander_layers"],
+                              "seq_len": config["expand_seq_len"]})
+
+        expander_fed_input_outputs = do_expander_decoding(
+            expander_fed_input_embs) 
+        expander_fed_output_outputs = do_expander_decoding(
+            expander_fed_output_embs) 
+
 
         #### losses
-        self.base_eval_loss = tf.nn.softmax_cross_entropy_with_logits(
-            labels=oh_eval_target, logits=self.base_eval_output)
 
-        self.base_eval_masked_loss = tf.where(
-            self.eval_mask_ph, 
-            self.base_eval_loss, 
-            tf.zeros_like(self.base_eval_loss))
+        # evaluate
+        self.base_eval_loss = masked_xe_loss(logits=self.base_eval_output,
+                                             targets=oh_eval_target,
+                                             mask=self.eval_mask_ph)
 
         self.total_base_eval_loss = tf.reduce_mean(
-            tf.reduce_mean(self.base_eval_masked_loss, axis=-1))
+            tf.reduce_mean(self.base_eval_loss, axis=-1))
 
-        self.base_fed_eval_loss = tf.nn.softmax_cross_entropy_with_logits(
-            labels=oh_eval_target, logits=self.base_fed_eval_output)
-
-        self.base_fed_eval_masked_loss = tf.where(
-            self.eval_mask_ph, 
-            self.base_fed_eval_loss, 
-            tf.zeros_like(self.base_fed_eval_loss))
+        self.base_fed_eval_loss = masked_xe_loss(logits=self.base_fed_eval_output,
+                                                 targets=oh_eval_target,
+                                                 mask=self.eval_mask_ph)
 
         self.total_base_fed_eval_loss = tf.reduce_mean(
-            tf.reduce_mean(self.base_fed_eval_masked_loss, axis=-1))
+            tf.reduce_mean(self.base_fed_eval_loss, axis=-1))
+
+        # expand
 
         # meta
-        self.meta_map_loss = tf.reduce_mean(tf.square(self.meta_map_output_embs - meta_target_embeddings))
+        self.meta_map_loss = tf.reduce_mean(
+            tf.square(self.meta_map_output_embs - tf.stop_gradient(meta_target_embeddings)))
 
         #### optimizer and training
 
