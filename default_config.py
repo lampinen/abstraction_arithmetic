@@ -42,6 +42,9 @@ default_config = {
                                                 # -- note that output to Z is
                                                 # linear by default
 
+    "expand_function_loss_weight": 1.,  # how strongly to weight the function
+                                        # loss relative to the I/O for expanding
+
     #### run stuff
     "optimizer": "Adam",  # Adam or RMSProp are supported options
     "num_epochs": 10000,  # number of training epochs
@@ -50,7 +53,7 @@ default_config = {
     "num_runs": 5, # number of independent runs of the network to complete
 
     "init_learning_rate": 3e-5,  # initial learning rate for base tasks
-    "init_meta_learning_rate": 1e-5,  # for meta-classification and mappings
+    "init_meta_learning_rate": 3e-5,  # for meta-classification and mappings
 
     "lr_decay": 0.85,  # how fast base task lr decays (multiplicative)
     "meta_lr_decay": 0.85,

@@ -148,7 +148,8 @@ class arithmetic_HoMM(object):
 
         #### Shared placeholders
         self.task_ph = tf.placeholder(
-            tf.int32, shape=[None,])  # only one task at a time
+            tf.int32, shape=[None,])  # only one task at a time executing
+                                      # but this ph is overloaded for assigning
         self.input_ph = tf.placeholder(
             tf.int32, shape=[None, self.config["in_seq_len"]])
         self.lr_ph = tf.placeholder(tf.float32)
@@ -579,23 +580,111 @@ class arithmetic_HoMM(object):
         else:
             raise ValueError("Unknown optimizer: %s" % self.config["optimizer"])
 
-        #self.train_op = self.optimizer.minimize(self.total_loss)
+        self.evaluate_train_op = self.optimizer.minimize(self.total_base_eval_loss)
+        self.expand_train_op = self.optimizer.minimize(self.total_expand_loss)
+        self.meta_train_op = self.optimizer.minimize(self.meta_map_loss)
 
-#    def _sess_and_init(self):
-#        # Saver
-#        self.saver = tf.train.Saver()
-#
-#        # initialize
-#        sess_config = tf.ConfigProto()
-#        sess_config.gpu_options.allow_growth = True
-#        self.sess = tf.Session(config=sess_config)
-#        self.sess.run(tf.global_variables_initializer())
-#
-#        save_config(self.config["save_config_filename"],
-#                    self.config)
+        # for some follow-up experiments, we optimize cached embeddings after
+        # guessing them zero-shot, to show the improved efficiency of learning
+        # from a good guess at the solution.
+        self.optimize_evaluate_op = self.optimizer.minimize(self.total_base_eval_loss,
+							    var_list=[self.task_embeddings])
+        self.optimize_expand_op = self.optimizer.minimize(self.total_expand_loss,
+							  var_list=[self.task_embeddings])
 
+    def _sess_and_init(self):
+        # Saver
+        self.saver = tf.train.Saver()
 
+        # initialize
+        sess_config = tf.ConfigProto()
+        sess_config.gpu_options.allow_growth = True
+        self.sess = tf.Session(config=sess_config)
+        self.sess.run(tf.global_variables_initializer())
 
+    def save_parameters(self, filename):
+        self.saver.save(self.sess, filename)
+
+    def restore_parameters(self, filename):
+        self.saver.restore(self.sess, filename)
+
+    def build_evaluate_feed_dict(self, inputs, task_id=None,
+                                 feed_embedding=None,
+                                 targets=None, target_masks=None,
+                                 call_type="eval"):
+
+        feed_dict = {}
+        feed_dict[self.input_ph] = inputs
+        if task_id is None:
+            if fed_embedding is None:
+                raise ValueError("You must supply a task id or embedding!")
+            feed_dict[self.feed_embedding_ph] = feed_embedding 
+        else:
+            if fed_embedding is not None:
+                raise ValueError("You must supply either a task id or embedding, not both.")
+            feed_dict[self.task_ph] = np.array(task_id)
+        if targets is not None: 
+            if target_masks is None:
+                raise ValueError("Masks must be provided for targets.")
+            feed_dict[self.eval_target_ph] = targets
+            feed_dict[self.eval_mask_ph] = target_masks
+
+        if call_type == "train": 
+            feed_dict[self.lr_ph] = self.curr_lr
+
+        return feed_dict
+
+    def build_expand_feed_dict(self, inputs, task_id=None, feed_embedding=None,
+                               in_targets=None, in_target_masks=None, 
+                               fun_targets=None, fun_target_masks=None, 
+                               out_targets=None, out_target_masks=None, 
+                               call_type="eval"):
+
+        feed_dict = {}
+        feed_dict[self.input_ph] = inputs
+
+        if task_id is None:
+            if fed_embedding is None:
+                raise ValueError("You must supply a task id or embedding!")
+            feed_dict[self.feed_embedding_ph] = feed_embedding 
+        else:
+            if fed_embedding is not None:
+                raise ValueError("You must supply either a task id or embedding, not both.")
+            feed_dict[self.task_ph] = np.array(task_id)
+
+        targets_and_masks = [in_targets, in_target_masks, out_targets,
+                             out_target_masks, fun_targets, fun_target_masks]
+        tam_not_none = [x is not None for x in targets_and_masks]
+        if any(tam_not_none): 
+            if not all(tam_not_none): 
+                raise ValueError("All targets and masks must be provided together.")
+            feed_dict[self.expand_input_targets_ph] = in_targets
+            feed_dict[self.expand_input_target_masks_ph] = in_target_masks
+            feed_dict[self.expand_function_targets_ph] = fun_targets
+            feed_dict[self.expand_function_target_masks_ph] = fun_target_masks
+            feed_dict[self.expand_output_targets_ph] = out_targets
+            feed_dict[self.expand_output_target_masks_ph] = out_target_masks
+
+        if call_type == "train": 
+            feed_dict[self.lr_ph] = self.curr_lr
+
+        return feed_dict
+
+    def build_meta_feed_dict(self, meta_task_id, input_ids, target_ids=None,
+                             call_type="eval"):
+
+        feed_dict = {}
+        feed_dict[self.task_ph] = np.array(meta_task_id)
+        feed_dict[self.meta_input_ph] = input_ids
+        if target_ids is not None: 
+            feed_dict[self.meta_target_ph] = target_ids
+
+        if call_type == "train": 
+            feed_dict[self.lr_ph] = self.curr_meta_lr
+
+        return feed_dict
+
+        
 
 if __name__ == "__main__":
     model = arithmetic_HoMM(config=default_config.default_config) 
