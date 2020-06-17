@@ -298,11 +298,11 @@ def build_dataset(max_int=100,
     ## meta up operator
     dataset["up"] = {}
     dataset["up"]["train"] = {"task": FUNCTION_IDS["up"],
-                              "meta_inputs": np.array([FUNCTION_IDS[x] for x in ["s", "+"]], dtype=np.int32),
-                              "meta_targets": np.array([FUNCTION_IDS[x] for x in ["+", "*"]], dtype=np.int32)} 
+                              "meta_inputs": np.array([[FUNCTION_IDS[x]] for x in ["s", "+"]], dtype=np.int32),
+                              "meta_targets": np.array([[FUNCTION_IDS[x]] for x in ["+", "*"]], dtype=np.int32)} 
     dataset["up"]["test"] = {"task": FUNCTION_IDS["up"],
-                             "meta_inputs": np.array([FUNCTION_IDS["*"]], dtype=np.int32),
-                             "meta_targets": np.array([FUNCTION_IDS["^"]], dtype=np.int32)} 
+                             "meta_inputs": np.array([[FUNCTION_IDS["*"]]], dtype=np.int32),
+                             "meta_targets": np.array([[FUNCTION_IDS["^"]]], dtype=np.int32)} 
 
     return dataset
 

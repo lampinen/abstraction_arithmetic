@@ -48,7 +48,7 @@ default_config = {
     #### run stuff
     "optimizer": "Adam",  # Adam or RMSProp are supported options
     "num_epochs": 10000,  # number of training epochs
-    "eval_every": 20,  # how many epochs between evals
+    "eval_every": 1,  # how many epochs between evals
 
     "batch_size": 20,
 
@@ -59,7 +59,7 @@ default_config = {
 
     "lr_decay": 0.85,  # how fast base task lr decays (multiplicative)
     "meta_lr_decay": 0.85,
-    "lr_decays_every": 100,  # lr decays happen once per this many epochs
+    "lr_decays_every": 500,  # lr decays happen once per this many epochs
 
     "min_learning_rate": 3e-8,  # can't decay past these minimum values 
     "min_meta_learning_rate": 1e-7,

@@ -685,7 +685,7 @@ class arithmetic_HoMM(object):
                              call_type="eval"):
 
         feed_dict = {}
-        feed_dict[self.task_ph] = np.array(meta_task_id)
+        feed_dict[self.task_ph] = np.array([meta_task_id])
         feed_dict[self.meta_input_ph] = input_ids
         if target_ids is not None: 
             feed_dict[self.meta_target_ph] = target_ids
@@ -743,28 +743,128 @@ class arithmetic_HoMM(object):
                     results["expand"][subset_name][k] = v / num_batches
         return results
 
-    def meta_eval(self, dataset):
-        pass
+    def meta_eval(self, meta_dataset):
+        results = {}
+        for subset_name, subset in meta_dataset.items():
+            feed_dict = self.build_meta_feed_dict(
+                meta_task_id=subset["task"], 
+                input_ids=subset["meta_inputs"], 
+                target_ids=subset["meta_targets"],
+                call_type="eval")
+            results[subset_name] = self.sess.run(self.meta_map_loss,
+                                                 feed_dict=feed_dict)
+        return results
     
     def do_eval(self, dataset, epoch):
         results = {}
         for fun in self.functions:
             fun_str = arithmetic_for_homm.FUNCTION_STRINGS[fun]
-            if fun in self.operations:  # operation
+            if fun in self.operations:  # operation 
                 results[fun_str] = self.base_eval(dataset[fun])
             else:  # meta
                 results[fun_str] = self.meta_eval(dataset[fun])
         results = untree_dicts(results)
-        print(results)
         if epoch == 0:
-            pass
-        
+            self.result_keys = list(results.keys())
+            self.result_keys.sort()
+            self.output_format = "%i, " + ", ".join(["%f"] * len(self.result_keys)) + "\n"
+            self.result_keys = ["epoch"] + self.result_keys
+            if self.output_filename is not None:
+                with open(self.output_filename, "w") as fout:
+                    fout.write(", ".join(self.result_keys) + "\n")
+
         results["epoch"] = epoch
+        print(results)
+        if self.output_filename is not None:
+            with open(self.output_filename, "a") as fout:
+                fout.write(self.output_format % tuple([results[x] for x in self.result_keys]))
+        
+    def base_train(self, fun_dataset):
+        # evaluate training 
+        batch_size = self.batch_size
+        subset = fun_dataset["evaluate"]["train"]
+        num_points = subset["input"].shape[0]
+        if num_points > batch_size:
+            batch_indices = np.random.choice(num_points, size=batch_size, replace=False)
+            feed_dict = self.build_evaluate_feed_dict(
+                inputs=subset["input"][batch_indices],
+                task_id=subset["task"],
+                targets=subset["eval_target"][batch_indices],
+                target_masks=subset["eval_mask"][batch_indices],
+                call_type="train")  
+        else:
+            feed_dict = self.build_evaluate_feed_dict(
+                inputs=subset["input"],
+                task_id=subset["task"],
+                targets=subset["eval_target"],
+                target_masks=subset["eval_mask"],
+                call_type="train")  
+        self.sess.run(self.evaluate_train_op,
+                      feed_dict=feed_dict)
+                 
+        # expand training
+        if fun_dataset["expand"] is not None:
+            subset = fun_dataset["expand"]["train"]
+            num_points = subset["input"].shape[0]
+            if num_points > batch_size:
+                batch_indices = np.random.choice(num_points, size=batch_size, replace=False)
+                feed_dict = self.build_expand_feed_dict(
+                    inputs=subset["input"][batch_indices],
+                    task_id=subset["task"],
+                    in_targets=subset["exp_in_targs"][batch_indices],
+                    in_target_masks=subset["exp_in_targ_masks"][batch_indices],
+                    fun_targets=subset["exp_fun_targs"][batch_indices],
+                    fun_target_masks=subset["exp_fun_targ_masks"][batch_indices],
+                    out_targets=subset["exp_out_targs"][batch_indices],
+                    out_target_masks=subset["exp_out_targ_masks"][batch_indices],
+                    call_type="train")  
+            else:
+                feed_dict = self.build_expand_feed_dict(
+                    inputs=subset["input"],
+                    task_id=subset["task"],
+                    in_targets=subset["exp_in_targs"],
+                    in_target_masks=subset["exp_in_targ_masks"],
+                    fun_targets=subset["exp_fun_targs"],
+                    fun_target_masks=subset["exp_fun_targ_masks"],
+                    out_targets=subset["exp_out_targs"],
+                    out_target_masks=subset["exp_out_targ_masks"],
+                    call_type="train")  
+            self.sess.run(self.expand_train_op,
+                          feed_dict=feed_dict)
+
+    def meta_train(self, meta_dataset):
+        subset=meta_dataset["train"]
+        feed_dict = self.build_meta_feed_dict(
+            meta_task_id=subset["task"],
+            input_ids=subset["meta_inputs"],
+            target_ids=subset["meta_targets"],
+            call_type="train")
+        self.sess.run(self.meta_train_op,
+                      feed_dict=feed_dict)
+
+    def _end_epoch_calls(self, epoch):
+        if epoch % self.config["lr_decays_every"] == 0:
+            if self.curr_lr > self.config["min_learning_rate"]:
+                self.curr_lr *= self.config["lr_decay"]
+            if self.curr_meta_lr > self.config["min_meta_learning_rate"]:
+                self.curr_meta_lr *= self.config["meta_lr_decay"]
         
     def run_training(self, dataset):
         self.operations = dataset["operations"]
         self.functions = dataset["functions"]
         self.do_eval(dataset, epoch=0)
+        eval_every = self.config["eval_every"]
+        self.curr_lr = self.config["init_learning_rate"]
+        self.curr_meta_lr = self.config["init_meta_learning_rate"]
+        for epoch_i in range(1, self.config["num_epochs"] + 1):
+            for fun in self.functions:
+                if fun in self.operations:  # operation 
+                    self.base_train(dataset[fun])
+                else:  # meta
+                    self.meta_train(dataset[fun])
+            if epoch_i % eval_every == 0:
+                self.do_eval(dataset, epoch=epoch_i)
+            self._end_epoch_calls(epoch_i)
     
  
 
@@ -778,7 +878,7 @@ if __name__ == "__main__":
         "in_seq_len": dataset["in_seq_len"],
         "out_seq_len": dataset["out_seq_len"],
         "expand_seq_len": dataset["expand_seq_len"],
-        "output_dir": None,
+        "output_dir": "/mnt/fs4/lampinen/arithmetic_abstraction/with_homm/",
         "filename_prefix": "run{}_".format(run_i) 
     })
     model = arithmetic_HoMM(config=this_config) 
