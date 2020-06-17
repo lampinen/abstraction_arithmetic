@@ -110,6 +110,17 @@ def masked_xe_loss(logits, targets, mask):
     return masked_loss
 
 
+def masked_mse_loss(outputs, targets, mask, reduce_before_masking=True):
+    unmasked_loss = tf.square(outputs - targets) 
+    if reduce_before_masking:
+        unmasked_loss = tf.reduce_sum(unmasked_loss, axis=-1)
+
+    masked_loss = tf.where(mask, unmasked_loss,
+                           tf.zeros_like(unmasked_loss))
+
+    return masked_loss
+
+
 class arithmetic_HoMM(object):
     def __init__(self, config):
         self.config = config
@@ -225,14 +236,18 @@ class arithmetic_HoMM(object):
         self.curr_task_embedding = tf.nn.embedding_lookup(self.task_embeddings, 
                                                           self.task_ph)
         
-        meta_input_embeddings = tf.nn.embedding_lookup(self.task_embeddings,
-                                                       self.meta_input_ph)
+        # TODO: think about whether any of these should be unstopped (optionally)
+        meta_input_embeddings = tf.stop_gradient(
+            tf.nn.embedding_lookup(self.task_embeddings,
+                                   self.meta_input_ph))
 
-        meta_target_embeddings = tf.nn.embedding_lookup(self.task_embeddings,
-                                                        self.meta_target_ph)
+        meta_target_embeddings = tf.stop_gradient(
+            tf.nn.embedding_lookup(self.task_embeddings,
+                                   self.meta_target_ph))
 
-        exp_fun_targets = tf.nn.embedding_lookup(self.task_embeddings,
-                                                 self.expand_function_targets_ph)
+        exp_fun_targets = tf.stop_gradient(
+            tf.nn.embedding_lookup(self.task_embeddings,
+                                   self.expand_function_targets_ph))
 
         #### Hyper network
         F_num_hidden = config["F_num_hidden"]
@@ -505,21 +520,53 @@ class arithmetic_HoMM(object):
                                              targets=oh_eval_target,
                                              mask=self.eval_mask_ph)
 
-        self.total_base_eval_loss = tf.reduce_mean(
-            tf.reduce_mean(self.base_eval_loss, axis=-1))
+        self.total_base_eval_loss = tf.reduce_mean(self.base_eval_loss)
 
         self.base_fed_eval_loss = masked_xe_loss(logits=self.base_fed_eval_output,
                                                  targets=oh_eval_target,
                                                  mask=self.eval_mask_ph)
 
-        self.total_base_fed_eval_loss = tf.reduce_mean(
-            tf.reduce_mean(self.base_fed_eval_loss, axis=-1))
+        self.total_base_fed_eval_loss = tf.reduce_mean(self.base_fed_eval_loss)
 
         # expand
 
+        self.expand_input_loss = masked_xe_loss(logits=expander_input_outputs,
+                                                targets=oh_exp_in_target,
+                                                mask=self.expand_input_targets_mask_ph)
+        self.total_expand_input_loss = tf.reduce_mean(self.expand_input_loss)
+
+        self.expand_output_loss = masked_xe_loss(logits=expander_output_outputs,
+                                                 targets=oh_exp_out_target,
+                                                 mask=self.expand_output_targets_mask_ph)
+        self.total_expand_output_loss = tf.reduce_mean(self.expand_output_loss)
+
+        self.expand_fun_loss = masked_mse_loss(outputs=expander_function_embs,
+                                               targets=exp_fun_targets,
+                                               mask=self.expand_function_targets_mask_ph)
+        self.total_expand_fun_loss = tf.reduce_mean(self.expand_fun_loss)
+
+        fun_loss_weight = config["expand_function_loss_weight"]
+        self.total_expand_loss = self.total_expand_input_loss + fun_loss_weight * self.total_expand_fun_loss + self.total_expand_output_loss
+
+        self.expand_fed_input_loss = masked_xe_loss(logits=expander_input_outputs,
+                                                    targets=oh_exp_in_target,
+                                                    mask=self.expand_input_targets_mask_ph)
+        self.total_expand_fed_input_loss = tf.reduce_mean(self.expand_fed_input_loss)
+
+        self.expand_fed_output_loss = masked_xe_loss(logits=expander_output_outputs,
+                                                     targets=oh_exp_out_target,
+                                                     mask=self.expand_output_targets_mask_ph)
+        self.total_expand_fed_output_loss = tf.reduce_mean(self.expand_fed_output_loss)
+
+        self.expand_fed_fun_loss = masked_mse_loss(outputs=expander_fed_function_embs,
+                                                   targets=exp_fun_targets,
+                                                   mask=self.expand_function_targets_mask_ph)
+        self.total_expand_fed_fun_loss = tf.reduce_mean(self.expand_fed_fun_loss)
+        self.total_expand_fed_loss = self.total_expand_fed_input_loss + fun_loss_weight * self.total_expand_fed_fun_loss + self.total_expand_fed_output_loss
+
         # meta
         self.meta_map_loss = tf.reduce_mean(
-            tf.square(self.meta_map_output_embs - tf.stop_gradient(meta_target_embeddings)))
+            tf.square(self.meta_map_output_embs - meta_target_embeddings))
 
         #### optimizer and training
 
