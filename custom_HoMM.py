@@ -393,8 +393,52 @@ class arithmetic_HoMM(object):
         #### and decode a sequence of steps each of which consist of sub-task
         #### embeddings and inputs, which are then executed to yield the next
         #### expander input.
-        
 
+        def expander(task_embedding, processed_input, config, scope="decoder", reuse=True):
+            """config should be dict containing dimensionality, num_layers, and
+            seq_length"""
+            dimensionality = config["dimensionality"]
+            num_lstm_layers = config["num_layers"]
+            seq_len = config["seq_len"]
+            batch_size = tf.shape(processed_input)[0]
+
+            # will probably have to tile task embedding b/c no broadcasting 
+            full_input_embeddings = tf.concat([task_embedding, processed_input],
+                                               axis=-1)
+
+            with tf.variable_scope(scope, reuse=reuse):
+                cells = [tf.nn.rnn_cell.LSTMCell(
+                    dimensionality) for _ in range(num_lstm_layers)]
+                stacked_cell = tf.nn.rnn_cell.MultiRNNCell(cells)
+
+                state = input_embeddings_to_LSTM_state(
+                    full_input_embeddings, num_lstm_layers, dimensionality, reuse=reuse)
+
+                this_input = tf.zeros([batch_size, dimensionality])
+                step_function_embs = []
+                step_input_embs = []
+                step_outputs = []
+                for i in range(seq_len):
+                    cell_output, state = stacked_cell(this_input, state)
+                    with tf.variable_scope("function_fc", reuse=reuse or i > 0): 
+                        this_step_function_emb = slim.fully_connected(
+                            cell_output, dimensionality,
+                            activation_fn=None)
+                    step_function_embs.append(this_step_function_emb)
+                    with tf.variable_scope("input_fc", reuse=reuse or i > 0): 
+                        this_setp_input_emb = slim.fully_connected(
+                            cell_output, dimensionality,
+                            activation_fn=None)
+                    step_input_embs.append(this_step_input_emb)
+
+                    this_step_task_params = hyper_network(this_function_emb)
+                    this_step_output_emb = task_network(this_step_task_params,
+                                                        this_input_embs)
+
+                    this_input = 
+
+            output_logits = tf.stack(output_logits, axis=1)
+            return output_logits
 
         #### losses
         self.base_eval_loss = tf.nn.softmax_cross_entropy_with_logits(
