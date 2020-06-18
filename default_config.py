@@ -57,8 +57,8 @@ default_config = {
     "init_learning_rate": 3e-5,  # initial learning rate for base tasks
     "init_meta_learning_rate": 3e-5,  # for meta-classification and mappings
 
-    "lr_decay": 0.85,  # how fast base task lr decays (multiplicative)
-    "meta_lr_decay": 0.85,
+    "lr_decay": 0.9,  # how fast base task lr decays (multiplicative)
+    "meta_lr_decay": 0.9,
     "lr_decays_every": 500,  # lr decays happen once per this many epochs
 
     "min_learning_rate": 3e-8,  # can't decay past these minimum values 

@@ -827,7 +827,7 @@ class arithmetic_HoMM(object):
                 target_masks=subset["eval_mask"],
                 call_type="train")  
 
-        if optimize_task_embs_only:
+        if optimize_task_emb_only:
             self.sess.run(self.optimize_evaluate_op,
                           feed_dict=feed_dict)
         else:
@@ -861,7 +861,7 @@ class arithmetic_HoMM(object):
                     out_targets=subset["exp_out_targs"],
                     out_target_masks=subset["exp_out_targ_masks"],
                     call_type="train")  
-            if optimize_task_embs_only:
+            if optimize_task_emb_only:
                 self.sess.run(self.optimize_expand_op,
                               feed_dict=feed_dict)
             else:
@@ -946,13 +946,16 @@ class arithmetic_HoMM(object):
             elif guess_type == "random":
                 dimensionality = self.config["dimensionality"]
                 scale = 1./ np.sqrt(dimensionality) 
-                update_values = scale * np.random.normal(size=[len(target_ids),
+                result_embeddings = scale * np.random.normal(size=[len(target_ids),
                                                                dimensionality]) 
             elif guess_type == centroid:
                 result_embeddings = np.tile(centroid, [len(target_ids), 1])
 
             target_ids = np.squeeze(target_ids, axis=-1)
-            result_embeddings = np.squeeze(result_embeddings, axis=1)
+
+            print(result_embeddings.shape)
+            if len(result_embeddings.shape) > 2:
+                result_embeddings = np.squeeze(result_embeddings, axis=1)
             self.sess.run(
                 self.update_embeddings,
                 feed_dict={
@@ -971,13 +974,13 @@ class arithmetic_HoMM(object):
             eval_every = self.config["eval_every"]
             opt_filename = self.filename_prefix + "guesstype-{}_opt_losses.csv".format(guess_type)
 
-            self.do_eval(epoch=0, output_filename=opt_filename)
+            self.do_eval(dataset, epoch=0, output_filename=opt_filename)
             for epoch in range(1, num_optimization_epochs+1):
                 for fun in target_functions:
                     self.base_train(dataset[fun], optimize_task_emb_only=True)
 
-                if epoch % eval_every == 0 or epcoh == num_optimization_epochs:
-                    self.do_eval(epoch=epoch, output_filename=opt_filename)
+                if epoch % eval_every == 0 or epoch == num_optimization_epochs:
+                    self.do_eval(dataset, epoch=epoch, output_filename=opt_filename)
 
 
 if __name__ == "__main__":
