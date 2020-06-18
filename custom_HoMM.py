@@ -894,7 +894,7 @@ class arithmetic_HoMM(object):
 
     def run_training(self, dataset, functions_to_skip=[], initialize_training=True):
         if initialize_training:
-            self.initialize_trainig(dataset)
+            self.initialize_training(dataset)
         eval_every = self.config["eval_every"]
         train_meta = self.config["train_meta"]
 
@@ -986,7 +986,7 @@ if __name__ == "__main__":
     #### config
     run_offset = 0
     num_runs = 5
-    condition = "untrained"  # meta_map: learn all but exp with "up" mapping,
+    condition = "meta_map"  # meta_map: learn all but exp with "up" mapping,
                              #           meta-map to exp and optimize exp task
                              #           task embedding
                              # meta_map_curriculum: as above, except full train
