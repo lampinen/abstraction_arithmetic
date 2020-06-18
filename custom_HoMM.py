@@ -521,7 +521,15 @@ class arithmetic_HoMM(object):
             expander_fed_output_embs) 
 
 
-        #### losses
+        #### losses + accuracies
+        def get_accuracy(outputs, targets, mask):
+            """targets should be int"""
+            hard_outputs = tf.argmax(outputs, axis=-1, output_type=tf.int32)
+            outputs_equal_target = tf.equal(hard_outputs, targets)
+            return tf.reduce_mean(
+                tf.cast(tf.boolean_mask(outputs_equal_target,
+                                        mask),
+                        tf.float32))  
 
         # evaluate
         self.base_eval_loss = masked_xe_loss(logits=self.base_eval_output,
@@ -529,12 +537,20 @@ class arithmetic_HoMM(object):
                                              mask=self.eval_mask_ph)
 
         self.total_base_eval_loss = tf.reduce_mean(self.base_eval_loss)
+        self.total_base_eval_accuracy = get_accuracy(
+            outputs=self.base_eval_output,
+            targets=self.eval_target_ph,
+            mask=self.eval_mask_ph)
 
         self.base_fed_eval_loss = masked_xe_loss(logits=self.base_fed_eval_output,
                                                  targets=oh_eval_target,
                                                  mask=self.eval_mask_ph)
 
         self.total_base_fed_eval_loss = tf.reduce_mean(self.base_fed_eval_loss)
+        self.total_base_fed_eval_accuracy = get_accuracy(
+            outputs=self.base_fed_eval_output,
+            targets=self.eval_target_ph,
+            mask=self.eval_mask_ph)
 
         # expand
 
@@ -547,6 +563,10 @@ class arithmetic_HoMM(object):
                                                  targets=oh_exp_out_target,
                                                  mask=self.expand_output_targets_mask_ph)
         self.total_expand_output_loss = tf.reduce_mean(self.expand_output_loss)
+        self.total_expand_output_accuracy = get_accuracy(
+            outputs=expander_output_outputs,
+            targets=self.expand_output_targets_ph,
+            mask=self.expand_output_targets_mask_ph)
 
         self.expand_fun_loss = masked_mse_loss(outputs=expander_function_embs,
                                                targets=exp_fun_targets,
@@ -558,7 +578,8 @@ class arithmetic_HoMM(object):
         self.all_expand_losses = {"expand_total_loss": self.total_expand_loss, 
                                   "expand_input_loss": self.total_expand_input_loss,
                                   "expand_function_loss": self.total_expand_fun_loss,
-                                  "expand_output_loss": self.total_expand_output_loss}
+                                  "expand_output_loss": self.total_expand_output_loss,
+                                  "expand_output_accuracy": self.total_expand_output_accuracy}
 
         self.expand_fed_input_loss = masked_xe_loss(logits=expander_input_outputs,
                                                     targets=oh_exp_in_target,
@@ -700,7 +721,8 @@ class arithmetic_HoMM(object):
         # evaluate eval
         batch_size = self.batch_size
         for subset_name, subset in fun_dataset["evaluate"].items():
-            results["evaluate"][subset_name] = {"total_evaluate_loss": 0.}
+            results["evaluate"][subset_name] = {"evaluate_loss": 0.,
+                                                "evaluate_accuracy": 0.}
             num_points = subset["input"].shape[0]
             num_batches = int(np.ceil(num_points / batch_size))
             evaluate_loss = 0.
@@ -711,9 +733,10 @@ class arithmetic_HoMM(object):
                     targets=subset["eval_target"][batch_i * batch_size:(batch_i + 1) * batch_size],
                     target_masks=subset["eval_mask"][batch_i * batch_size:(batch_i + 1) * batch_size],
                     call_type="eval")  
-                this_losses = self.sess.run(self.total_base_eval_loss,
+                this_losses = self.sess.run([self.total_base_eval_loss, self.total_base_eval_accuracy],
                                             feed_dict=feed_dict)
-                results["evaluate"][subset_name]["total_evaluate_loss"] += this_losses
+                results["evaluate"][subset_name]["evaluate_loss"] += this_losses[0]
+                results["evaluate"][subset_name]["evaluate_accuracy"] += this_losses[1]
             for (k, v) in results["evaluate"][subset_name].items():
                 results["evaluate"][subset_name][k] = v / num_batches
                  
@@ -854,6 +877,7 @@ class arithmetic_HoMM(object):
         self.functions = dataset["functions"]
         self.do_eval(dataset, epoch=0)
         eval_every = self.config["eval_every"]
+        train_meta = self.config["train_meta"]
         self.curr_lr = self.config["init_learning_rate"]
         self.curr_meta_lr = self.config["init_meta_learning_rate"]
         for epoch_i in range(1, self.config["num_epochs"] + 1):
@@ -861,7 +885,8 @@ class arithmetic_HoMM(object):
                 if fun in self.operations:  # operation 
                     self.base_train(dataset[fun])
                 else:  # meta
-                    self.meta_train(dataset[fun])
+                    if train_meta:
+                        self.meta_train(dataset[fun])
             if epoch_i % eval_every == 0:
                 self.do_eval(dataset, epoch=epoch_i)
             self._end_epoch_calls(epoch_i)
@@ -869,6 +894,10 @@ class arithmetic_HoMM(object):
  
 
 if __name__ == "__main__":
+    #### config
+    train_meta = True 
+
+    #### end config
     run_i = 0
     dataset = arithmetic_for_homm.build_dataset(random_seed=run_i)
     this_config = default_config.default_config
@@ -879,7 +908,8 @@ if __name__ == "__main__":
         "out_seq_len": dataset["out_seq_len"],
         "expand_seq_len": dataset["expand_seq_len"],
         "output_dir": "/mnt/fs4/lampinen/arithmetic_abstraction/with_homm/",
-        "filename_prefix": "run{}_".format(run_i) 
+        "filename_prefix": "run{}_".format(run_i),
+        "train_meta": train_meta
     })
     model = arithmetic_HoMM(config=this_config) 
     model.run_training(dataset=dataset)

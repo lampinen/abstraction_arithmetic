@@ -48,7 +48,7 @@ default_config = {
     #### run stuff
     "optimizer": "Adam",  # Adam or RMSProp are supported options
     "num_epochs": 10000,  # number of training epochs
-    "eval_every": 1,  # how many epochs between evals
+    "eval_every": 10,  # how many epochs between evals
 
     "batch_size": 20,
 
