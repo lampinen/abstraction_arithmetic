@@ -923,7 +923,7 @@ class arithmetic_HoMM(object):
                 subset = meta_dataset["train"]  # update new task embeddings
                 input_ids = np.concatenate([subset["meta_inputs"],
                                             subset["meta_targets"]], axis=0)
-                input_ids = np.array(list(set(input_ids))) 
+                input_ids = np.array(list(set(np.squeeze(input_ids))))
                 feed_dict = self.build_meta_feed_dict(
                     meta_task_id=subset["task"],
                     input_ids=subset["meta_inputs"],
@@ -948,12 +948,11 @@ class arithmetic_HoMM(object):
                 scale = 1./ np.sqrt(dimensionality) 
                 result_embeddings = scale * np.random.normal(size=[len(target_ids),
                                                                dimensionality]) 
-            elif guess_type == centroid:
+            elif guess_type == "centroid":
                 result_embeddings = np.tile(centroid, [len(target_ids), 1])
 
             target_ids = np.squeeze(target_ids, axis=-1)
 
-            print(result_embeddings.shape)
             if len(result_embeddings.shape) > 2:
                 result_embeddings = np.squeeze(result_embeddings, axis=1)
             self.sess.run(
@@ -965,14 +964,14 @@ class arithmetic_HoMM(object):
 
    
     def guess_embeddings_and_optimize(self, dataset, target_functions, 
-                                      num_optimization_epochs=25):
+                                      num_optimization_epochs=1000):
 
         for guess_type in ["meta_mapping", "random", "centroid"]:
             self.guess_embeddings(dataset=dataset, guess_type=guess_type)
 
             # set up eval and run
             eval_every = self.config["eval_every"]
-            opt_filename = self.filename_prefix + "guesstype-{}_opt_losses.csv".format(guess_type)
+            opt_filename = self.output_dir + self.filename_prefix + "guesstype-{}_opt_losses.csv".format(guess_type)
 
             self.do_eval(dataset, epoch=0, output_filename=opt_filename)
             for epoch in range(1, num_optimization_epochs+1):
