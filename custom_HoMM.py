@@ -134,7 +134,9 @@ class arithmetic_HoMM(object):
         self.batch_size = config["batch_size"]
         if config["output_dir"] is not None:
             output_dir = config["output_dir"]
+            self.output_dir = output_dir
             filename_prefix = config["filename_prefix"]
+            self.filename_prefix = filename_prefix
 
             if not os.path.exists(output_dir):
                 os.makedirs(output_dir)
@@ -778,7 +780,9 @@ class arithmetic_HoMM(object):
                                                  feed_dict=feed_dict)
         return results
     
-    def do_eval(self, dataset, epoch):
+    def do_eval(self, dataset, epoch, output_filename=None):
+        if output_filename is None:
+            output_filename = self.output_filename
         results = {}
         for fun in self.functions:
             fun_str = arithmetic_for_homm.FUNCTION_STRINGS[fun]
@@ -792,17 +796,17 @@ class arithmetic_HoMM(object):
             self.result_keys.sort()
             self.output_format = "%i, " + ", ".join(["%f"] * len(self.result_keys)) + "\n"
             self.result_keys = ["epoch"] + self.result_keys
-            if self.output_filename is not None:
-                with open(self.output_filename, "w") as fout:
+            if output_filename is not None:
+                with open(output_filename, "w") as fout:
                     fout.write(", ".join(self.result_keys) + "\n")
 
         results["epoch"] = epoch
         print(results)
-        if self.output_filename is not None:
-            with open(self.output_filename, "a") as fout:
+        if output_filename is not None:
+            with open(output_filename, "a") as fout:
                 fout.write(self.output_format % tuple([results[x] for x in self.result_keys]))
         
-    def base_train(self, fun_dataset):
+    def base_train(self, fun_dataset, optimize_task_emb_only=False):
         # evaluate training 
         batch_size = self.batch_size
         subset = fun_dataset["evaluate"]["train"]
@@ -822,8 +826,13 @@ class arithmetic_HoMM(object):
                 targets=subset["eval_target"],
                 target_masks=subset["eval_mask"],
                 call_type="train")  
-        self.sess.run(self.evaluate_train_op,
-                      feed_dict=feed_dict)
+
+        if optimize_task_embs_only:
+            self.sess.run(self.optimize_evaluate_op,
+                          feed_dict=feed_dict)
+        else:
+            self.sess.run(self.evaluate_train_op,
+                          feed_dict=feed_dict)
                  
         # expand training
         if fun_dataset["expand"] is not None:
@@ -852,8 +861,12 @@ class arithmetic_HoMM(object):
                     out_targets=subset["exp_out_targs"],
                     out_target_masks=subset["exp_out_targ_masks"],
                     call_type="train")  
-            self.sess.run(self.expand_train_op,
-                          feed_dict=feed_dict)
+            if optimize_task_embs_only:
+                self.sess.run(self.optimize_expand_op,
+                              feed_dict=feed_dict)
+            else:
+                self.sess.run(self.expand_train_op,
+                              feed_dict=feed_dict)
 
     def meta_train(self, meta_dataset):
         subset=meta_dataset["train"]
@@ -871,46 +884,160 @@ class arithmetic_HoMM(object):
                 self.curr_lr *= self.config["lr_decay"]
             if self.curr_meta_lr > self.config["min_meta_learning_rate"]:
                 self.curr_meta_lr *= self.config["meta_lr_decay"]
-        
-    def run_training(self, dataset):
+
+    def initialize_training(self, dataset):
         self.operations = dataset["operations"]
         self.functions = dataset["functions"]
-        self.do_eval(dataset, epoch=0)
-        eval_every = self.config["eval_every"]
-        train_meta = self.config["train_meta"]
+        self.meta_mappings = [x for x in self.functions if x not in self.operations]
         self.curr_lr = self.config["init_learning_rate"]
         self.curr_meta_lr = self.config["init_meta_learning_rate"]
+
+    def run_training(self, dataset, functions_to_skip=[], initialize_training=True):
+        if initialize_training:
+            self.initialize_trainig(dataset)
+        eval_every = self.config["eval_every"]
+        train_meta = self.config["train_meta"]
+
+        self.do_eval(dataset, epoch=0)
         for epoch_i in range(1, self.config["num_epochs"] + 1):
             for fun in self.functions:
+                if fun in functions_to_skip:  # for curriculum purposes, etc
+                    continue
                 if fun in self.operations:  # operation 
-                    self.base_train(dataset[fun])
+                        self.base_train(dataset[fun])
                 else:  # meta
                     if train_meta:
                         self.meta_train(dataset[fun])
             if epoch_i % eval_every == 0:
                 self.do_eval(dataset, epoch=epoch_i)
             self._end_epoch_calls(epoch_i)
-    
- 
+
+    def guess_embeddings(self, dataset, guess_type="meta_mapping"):
+        # update base embedding for eval tasks with meta-mapped versions
+        update_inds = []
+        update_values = []
+        centroid = None
+        for meta_mapping in self.meta_mappings:
+            meta_dataset = dataset[meta_mapping] 
+            if guess_type == "centroid":
+                subset = meta_dataset["train"]  # update new task embeddings
+                input_ids = np.concatenate([subset["meta_inputs"],
+                                            subset["meta_targets"]], axis=0)
+                input_ids = np.array(list(set(input_ids))) 
+                feed_dict = self.build_meta_feed_dict(
+                    meta_task_id=subset["task"],
+                    input_ids=subset["meta_inputs"],
+                    call_type="eval")
+
+                result_embeddings = self.sess.run(self.curr_task_embedding,
+                                                  feed_dict=feed_dict)
+                centroid = np.mean(result_embeddings, axis=0, keepdims=True)
+            subset = meta_dataset["test"]  # update new task embeddings
+            target_ids = subset["meta_targets"]
+            if guess_type == "meta_mapping":
+
+                feed_dict = self.build_meta_feed_dict(
+                    meta_task_id=subset["task"],
+                    input_ids=subset["meta_inputs"],
+                    call_type="eval")
+
+                result_embeddings = self.sess.run(self.meta_map_output_embs,
+                                                  feed_dict=feed_dict)
+            elif guess_type == "random":
+                dimensionality = self.config["dimensionality"]
+                scale = 1./ np.sqrt(dimensionality) 
+                update_values = scale * np.random.normal(size=[len(target_ids),
+                                                               dimensionality]) 
+            elif guess_type == centroid:
+                result_embeddings = np.tile(centroid, [len(target_ids), 1])
+
+            target_ids = np.squeeze(target_ids, axis=-1)
+            result_embeddings = np.squeeze(result_embeddings, axis=1)
+            self.sess.run(
+                self.update_embeddings,
+                feed_dict={
+                    self.task_ph: target_ids,
+                    self.update_task_embeddings_ph: result_embeddings 
+                })
+
+   
+    def guess_embeddings_and_optimize(self, dataset, target_functions, 
+                                      num_optimization_epochs=25):
+
+        for guess_type in ["meta_mapping", "random", "centroid"]:
+            self.guess_embeddings(dataset=dataset, guess_type=guess_type)
+
+            # set up eval and run
+            eval_every = self.config["eval_every"]
+            opt_filename = self.filename_prefix + "guesstype-{}_opt_losses.csv".format(guess_type)
+
+            self.do_eval(epoch=0, output_filename=opt_filename)
+            for epoch in range(1, num_optimization_epochs+1):
+                for fun in target_functions:
+                    self.base_train(dataset[fun], optimize_task_emb_only=True)
+
+                if epoch % eval_every == 0 or epcoh == num_optimization_epochs:
+                    self.do_eval(epoch=epoch, output_filename=opt_filename)
+
 
 if __name__ == "__main__":
     #### config
-    train_meta = True 
+    run_offset = 0
+    num_runs = 5
+    condition = "untrained"  # meta_map: learn all but exp with "up" mapping,
+                             #           meta-map to exp and optimize exp task
+                             #           task embedding
+                             # meta_map_curriculum: as above, except full train
+                             #                      after meta-mapping
+                             # curriculum: as previous, except no meta-mapping,
+                             #             just train full after training all
+                             #             but exp
+                             # untrained: control for meta_map, without initial
+                             #            training
+                             # train_exp_only: from beginning, learn only exp
 
     #### end config
+    if condition in ["train_exp_only", "untrained", "curriculum"]:
+        train_meta = False
+    else:
+        train_meta = True 
+    
     run_i = 0
-    dataset = arithmetic_for_homm.build_dataset(random_seed=run_i)
-    this_config = default_config.default_config
-    this_config.update({
-        "num_symbols": len(dataset["vocab_dict"]),
-        "num_functions": len(dataset["functions"]),
-        "in_seq_len": dataset["in_seq_len"],
-        "out_seq_len": dataset["out_seq_len"],
-        "expand_seq_len": dataset["expand_seq_len"],
-        "output_dir": "/mnt/fs4/lampinen/arithmetic_abstraction/with_homm/",
-        "filename_prefix": "run{}_".format(run_i),
-        "train_meta": train_meta
-    })
-    model = arithmetic_HoMM(config=this_config) 
-    model.run_training(dataset=dataset)
-     
+    for run_i in range(run_offset, run_offset + num_runs):
+        np.random.seed(run_i)
+        tf.set_random_seed(run_i)
+        dataset = arithmetic_for_homm.build_dataset(random_seed=run_i)
+        this_config = default_config.default_config
+        this_config.update({
+            "num_symbols": len(dataset["vocab_dict"]),
+            "num_functions": len(dataset["functions"]),
+            "in_seq_len": dataset["in_seq_len"],
+            "out_seq_len": dataset["out_seq_len"],
+            "expand_seq_len": dataset["expand_seq_len"],
+            "output_dir": "/mnt/fs4/lampinen/arithmetic_abstraction/with_homm_optimization/",
+            "filename_prefix": "condition-{}_run-{}_".format(condition, run_i),
+            "train_meta": train_meta
+        })
+        model = arithmetic_HoMM(config=this_config) 
+        if condition == "train_exp_only":
+            model.run_training(dataset=dataset, functions_to_skip=[x for x in dataset["functions"] if x != "^"])
+            model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
+            continue
+        
+        if condition not in "untrained":
+            model.run_training(dataset=dataset, functions_to_skip=["^"])
+        else:
+            model.initialize_training(dataset=dataset)
+
+        model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
+
+        if condition not in ["train_exp_only", "meta_map_curriculum", "curriculum"]:
+            model.guess_embeddings_and_optimize(dataset=dataset, target_functions=["^"])
+        elif condition == "meta_map_curriculum":
+            model.guess_embeddings(dataset=dataset)
+
+        if condition in ["meta_map_curriculum", "curriculum"]:
+            model.run_training(dataset=dataset, functions_to_skip=[], initialize_training=False)
+        
+        model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "final_parameters")
+        tf.reset_default_graph()
