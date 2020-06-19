@@ -632,6 +632,9 @@ class arithmetic_HoMM(object):
 
         # initialize
         sess_config = tf.ConfigProto()
+        if self.config["turn_off_arithmetic_optimization"]:
+            off = rewriter_config_pb2.RewriterConfig.OFF
+            sess_config.graph_options.rewrite_options.memory_optimization = off
         sess_config.gpu_options.allow_growth = True
         self.sess = tf.Session(config=sess_config)
         self.sess.run(tf.global_variables_initializer())
@@ -961,10 +964,12 @@ class arithmetic_HoMM(object):
                     self.task_ph: target_ids,
                     self.update_task_embeddings_ph: result_embeddings 
                 })
-
    
     def guess_embeddings_and_optimize(self, dataset, target_functions, 
-                                      num_optimization_epochs=1000):
+                                      num_optimization_epochs=1000,
+                                      initialize_optimization=True):
+        if initialize_optimization:
+            self.initialize_training(dataset)
 
         for guess_type in ["meta_mapping", "random", "centroid"]:
             self.guess_embeddings(dataset=dataset, guess_type=guess_type)
@@ -980,13 +985,14 @@ class arithmetic_HoMM(object):
 
                 if epoch % eval_every == 0 or epoch == num_optimization_epochs:
                     self.do_eval(dataset, epoch=epoch, output_filename=opt_filename)
+                self._end_epoch_calls(epoch_i)
 
 
 if __name__ == "__main__":
     #### config
     run_offset = 0
     num_runs = 5
-    condition = "meta_map"  # meta_map: learn all but exp with "up" mapping,
+    condition = "untrained"  # meta_map: learn all but exp with "up" mapping,
                              #           meta-map to exp and optimize exp task
                              #           task embedding
                              # meta_map_curriculum: as above, except full train
@@ -997,6 +1003,9 @@ if __name__ == "__main__":
                              # untrained: control for meta_map, without initial
                              #            training
                              # train_exp_only: from beginning, learn only exp
+    
+    turn_off_arithmetic_optimization = False  # if True, avoids a bug in TF
+                                              # causing AlreadyExistsError
 
     #### end config
     if condition in ["train_exp_only", "untrained", "curriculum"]:
@@ -1006,6 +1015,7 @@ if __name__ == "__main__":
     
     run_i = 0
     for run_i in range(run_offset, run_offset + num_runs):
+        print("Running run {} of condition {}".format(run_i, condition))
         np.random.seed(run_i)
         tf.set_random_seed(run_i)
         dataset = arithmetic_for_homm.build_dataset(random_seed=run_i)
@@ -1016,8 +1026,11 @@ if __name__ == "__main__":
             "in_seq_len": dataset["in_seq_len"],
             "out_seq_len": dataset["out_seq_len"],
             "expand_seq_len": dataset["expand_seq_len"],
-            "output_dir": "/mnt/fs4/lampinen/arithmetic_abstraction/with_homm_optimization/",
+            "output_dir": "/mnt/fs4/lampinen/arithmetic_abstraction/with_homm_optimization_faster/",
             "filename_prefix": "condition-{}_run-{}_".format(condition, run_i),
+            "turn_off_arithmetic_optimization": turn_off_arithmetic_optimization,
+#            "min_learning_rate": 1e-7,
+#            "min_meta_learning_rate": 5e-7,
             "train_meta": train_meta
         })
         model = arithmetic_HoMM(config=this_config) 
@@ -1034,12 +1047,12 @@ if __name__ == "__main__":
         model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
 
         if condition not in ["train_exp_only", "meta_map_curriculum", "curriculum"]:
-            model.guess_embeddings_and_optimize(dataset=dataset, target_functions=["^"])
+            model.guess_embeddings_and_optimize(dataset=dataset, target_functions=["^"], initialize_training=True)
         elif condition == "meta_map_curriculum":
             model.guess_embeddings(dataset=dataset)
 
         if condition in ["meta_map_curriculum", "curriculum"]:
-            model.run_training(dataset=dataset, functions_to_skip=[], initialize_training=False)
+            model.run_training(dataset=dataset, functions_to_skip=[], initialize_training=True)
         
         model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "final_parameters")
         tf.reset_default_graph()
