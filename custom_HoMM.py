@@ -751,6 +751,9 @@ class arithmetic_HoMM(object):
                 results["expand"][subset_name] = {k: 0. for k in self.all_expand_losses.keys()}
                 num_points = subset["input"].shape[0]
                 num_batches = int(np.ceil(num_points / batch_size))
+                if num_batches == 0:
+                    print("Skipping: {}, {}".format(subset_name, subset))
+                    continue
                 expand_loss = 0.
                 for batch_i in range(num_batches):
                     feed_dict = self.build_expand_feed_dict(
@@ -985,14 +988,14 @@ class arithmetic_HoMM(object):
 
                 if epoch % eval_every == 0 or epoch == num_optimization_epochs:
                     self.do_eval(dataset, epoch=epoch, output_filename=opt_filename)
-                self._end_epoch_calls(epoch_i)
+                self._end_epoch_calls(epoch)
 
 
 if __name__ == "__main__":
     #### config
-    run_offset = 0
-    num_runs = 5
-    condition = "untrained"  # meta_map: learn all but exp with "up" mapping,
+    run_offset = 2
+    num_runs = 3
+    condition = "meta_map_curriculum"  # meta_map: learn all but exp with "up" mapping,
                              #           meta-map to exp and optimize exp task
                              #           task embedding
                              # meta_map_curriculum: as above, except full train
@@ -1013,7 +1016,6 @@ if __name__ == "__main__":
     else:
         train_meta = True 
     
-    run_i = 0
     for run_i in range(run_offset, run_offset + num_runs):
         print("Running run {} of condition {}".format(run_i, condition))
         np.random.seed(run_i)
@@ -1047,7 +1049,7 @@ if __name__ == "__main__":
         model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
 
         if condition not in ["train_exp_only", "meta_map_curriculum", "curriculum"]:
-            model.guess_embeddings_and_optimize(dataset=dataset, target_functions=["^"], initialize_training=True)
+            model.guess_embeddings_and_optimize(dataset=dataset, target_functions=["^"], initialize_optimization=True)
         elif condition == "meta_map_curriculum":
             model.guess_embeddings(dataset=dataset)
 
