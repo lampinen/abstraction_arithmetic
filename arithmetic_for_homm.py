@@ -257,7 +257,7 @@ def build_dataset(max_int=100,
             dataset["^"]["expand"][subset]["exp_fun_targs"].append([FUNCTION_IDS["*"]] * len(out_seq))
             dataset["^"]["expand"][subset]["exp_out_targs"].append(out_seq)
 
-    in_seq_len = 6 
+    in_seq_len = 2 * len(str(max_int - 1)) + 2
     out_seq_len = in_seq_len  # have to be equal, because sometimes inputs are outputs 
     dataset["in_seq_len"] = in_seq_len
     dataset["out_seq_len"] = out_seq_len
@@ -312,7 +312,7 @@ if __name__ == "__main__":
     print(arithmetic_expander("3*5"))
     print(arithmetic_expander("6^3"))
     print(folder(arithmetic_expander("3^4")))
-    x = build_dataset()
+    x = build_dataset(max_int=1000)
     for op in x["operations"]:
         print()
         print()
