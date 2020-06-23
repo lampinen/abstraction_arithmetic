@@ -1019,7 +1019,7 @@ if __name__ == "__main__":
     run_offset = 0
     num_runs = 5
     output_dir = "/mnt/fs4/lampinen/arithmetic_abstraction/with_homm_larger/"
-    condition = "meta_map_curriculum"  # meta_map: learn all but exp with "up" mapping,
+    condition = "full_train"  # meta_map: learn all but exp with "up" mapping,
                              #           meta-map to exp and optimize exp task
                              #           task embedding
                              # meta_map_curriculum: as above, except full train
@@ -1027,6 +1027,7 @@ if __name__ == "__main__":
                              # untrained: control for meta_map, without initial
                              #            training
                              # train_exp_only: from beginning, learn only exp
+                             # full_train: from beginning, learn all 
     
     turn_off_arithmetic_optimization = False  # if True, avoids a bug in TF
                                               # causing AlreadyExistsError
@@ -1072,6 +1073,11 @@ if __name__ == "__main__":
         model = arithmetic_HoMM(config=this_config) 
         if condition == "train_exp_only":
             model.run_training(dataset=dataset, functions_to_skip=[x for x in dataset["functions"] if x != "^"])
+            model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
+            continue
+
+        if condition == "full_train":
+            model.run_training(dataset=dataset, functions_to_skip=[])
             model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
             continue
         
