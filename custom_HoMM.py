@@ -898,7 +898,8 @@ class arithmetic_HoMM(object):
         self.curr_lr = self.config["init_learning_rate"]
         self.curr_meta_lr = self.config["init_meta_learning_rate"]
 
-    def run_training(self, dataset, functions_to_skip=[], initialize_training=True):
+    def run_training(self, dataset, functions_to_skip=[], initialize_training=True,
+                     output_filename=None):
         if initialize_training:
             self.initialize_training(dataset)
         eval_every = self.config["eval_every"]
@@ -915,7 +916,7 @@ class arithmetic_HoMM(object):
                     if train_meta:
                         self.meta_train(dataset[fun])
             if epoch_i % eval_every == 0:
-                self.do_eval(dataset, epoch=epoch_i)
+                self.do_eval(dataset, epoch=epoch_i, output_filename=output_filename)
             self._end_epoch_calls(epoch_i)
 
     def guess_embeddings(self, dataset, guess_type="meta_mapping"):
@@ -990,19 +991,32 @@ class arithmetic_HoMM(object):
                     self.do_eval(dataset, epoch=epoch, output_filename=opt_filename)
                 self._end_epoch_calls(epoch)
 
+    def guess_embeddings_and_train(self, dataset, target_functions, 
+                                   num_optimization_epochs=1000,
+                                   initialize_training=True):
+        if initialize_training:
+            self.initialize_training(dataset)
+
+        for guess_type in ["meta_mapping", "random", "centroid"]:
+            model.restore_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
+            self.guess_embeddings(dataset=dataset, guess_type=guess_type)
+
+            # set up eval and run
+            eval_every = self.config["eval_every"]
+            out_filename = self.output_dir + self.filename_prefix + "guesstype-{}_phase2_losses.csv".format(guess_type)
+            model.run_training(dataset=dataset, functions_to_skip=[x for x in self.functions if x not in target_functions], initialize_training=initialize_training)
+
+
 
 if __name__ == "__main__":
     #### config
-    run_offset = 2
-    num_runs = 3
+    run_offset = 0
+    num_runs = 1
     condition = "meta_map_curriculum"  # meta_map: learn all but exp with "up" mapping,
                              #           meta-map to exp and optimize exp task
                              #           task embedding
                              # meta_map_curriculum: as above, except full train
                              #                      after meta-mapping
-                             # curriculum: as previous, except no meta-mapping,
-                             #             just train full after training all
-                             #             but exp
                              # untrained: control for meta_map, without initial
                              #            training
                              # train_exp_only: from beginning, learn only exp
@@ -1041,20 +1055,18 @@ if __name__ == "__main__":
             model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
             continue
         
-        if condition not in "untrained":
-            model.run_training(dataset=dataset, functions_to_skip=["^"])
-        else:
-            model.initialize_training(dataset=dataset)
-
-        model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
+#        if condition not in "untrained":
+#            model.run_training(dataset=dataset, functions_to_skip=["^"])
+#        else:
+#            model.initialize_training(dataset=dataset)
+#
+#        model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
 
         if condition not in ["train_exp_only", "meta_map_curriculum", "curriculum"]:
             model.guess_embeddings_and_optimize(dataset=dataset, target_functions=["^"], initialize_optimization=True)
-        elif condition == "meta_map_curriculum":
-            model.guess_embeddings(dataset=dataset)
 
-        if condition in ["meta_map_curriculum", "curriculum"]:
-            model.run_training(dataset=dataset, functions_to_skip=[], initialize_training=True)
+        if condition in ["meta_map_curriculum"]:
+            model.guess_embeddings_and_train(dataset=dataset, target_functions=["^"], initialize_training=True)
         
         model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "final_parameters")
         tf.reset_default_graph()
