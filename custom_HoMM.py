@@ -899,14 +899,16 @@ class arithmetic_HoMM(object):
         self.curr_meta_lr = self.config["init_meta_learning_rate"]
 
     def run_training(self, dataset, functions_to_skip=[], initialize_training=True,
-                     output_filename=None):
+                     output_filename=None, num_epochs=None):
         if initialize_training:
             self.initialize_training(dataset)
+        if num_epochs is None:
+            num_epochs = self.config["num_epochs"]
         eval_every = self.config["eval_every"]
         train_meta = self.config["train_meta"]
 
         self.do_eval(dataset, epoch=0)
-        for epoch_i in range(1, self.config["num_epochs"] + 1):
+        for epoch_i in range(1, num_epochs + 1):
             for fun in self.functions:
                 if fun in functions_to_skip:  # for curriculum purposes, etc
                     continue
@@ -975,7 +977,7 @@ class arithmetic_HoMM(object):
         if initialize_optimization:
             self.initialize_training(dataset)
 
-        for guess_type in ["meta_mapping", "random", "centroid"]:
+        for guess_type in ["random", "centroid", "meta_mapping"]:
             self.guess_embeddings(dataset=dataset, guess_type=guess_type)
 
             # set up eval and run
@@ -991,27 +993,32 @@ class arithmetic_HoMM(object):
                     self.do_eval(dataset, epoch=epoch, output_filename=opt_filename)
                 self._end_epoch_calls(epoch)
 
-    def guess_embeddings_and_train(self, dataset, target_functions, 
+    def guess_embeddings_and_train(self, dataset, target_functions=None, 
                                    num_optimization_epochs=1000,
                                    initialize_training=True):
         if initialize_training:
             self.initialize_training(dataset)
 
-        for guess_type in ["meta_mapping", "random", "centroid"]:
+        for guess_type in ["random", "centroid", "meta_mapping"]:
             model.restore_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
             self.guess_embeddings(dataset=dataset, guess_type=guess_type)
 
             # set up eval and run
             eval_every = self.config["eval_every"]
             out_filename = self.output_dir + self.filename_prefix + "guesstype-{}_phase2_losses.csv".format(guess_type)
-            model.run_training(dataset=dataset, functions_to_skip=[x for x in self.functions if x not in target_functions], initialize_training=initialize_training)
+            if target_functions is not None:
+                functions_to_skip = [x for x in self.functions if x not in target_functions]
+            else:
+                functions_to_skip = None
+            model.run_training(dataset=dataset, functions_to_skip=functions_to_sip, initialize_training=initialize_training)
 
 
 
 if __name__ == "__main__":
     #### config
     run_offset = 0
-    num_runs = 1
+    num_runs = 5
+    output_dir = "/mnt/fs4/lampinen/arithmetic_abstraction/with_homm_larger/"
     condition = "meta_map_curriculum"  # meta_map: learn all but exp with "up" mapping,
                              #           meta-map to exp and optimize exp task
                              #           task embedding
@@ -1024,6 +1031,13 @@ if __name__ == "__main__":
     turn_off_arithmetic_optimization = False  # if True, avoids a bug in TF
                                               # causing AlreadyExistsError
 
+    max_int = 250 
+    dataset_holdouts_per = 30
+    exponentiation_holdouts = ["2^5", "4^4", "8^2", "9^1", "0^6", "1^4", "12^2",
+                               "5^3", "3^5"]
+
+    num_epochs = 20000
+
     #### end config
     if condition in ["train_exp_only", "untrained", "curriculum"]:
         train_meta = False
@@ -1034,7 +1048,10 @@ if __name__ == "__main__":
         print("Running run {} of condition {}".format(run_i, condition))
         np.random.seed(run_i)
         tf.set_random_seed(run_i)
-        dataset = arithmetic_for_homm.build_dataset(random_seed=run_i)
+        dataset = arithmetic_for_homm.build_dataset(
+            max_int=max_int, random_seed=run_i,
+            num_holdouts_per_operation=dataset_holdouts_per,
+            exponentiation_holdouts=exponentiation_holdouts)
         this_config = default_config.default_config
         this_config.update({
             "num_symbols": len(dataset["vocab_dict"]),
@@ -1042,11 +1059,14 @@ if __name__ == "__main__":
             "in_seq_len": dataset["in_seq_len"],
             "out_seq_len": dataset["out_seq_len"],
             "expand_seq_len": dataset["expand_seq_len"],
-            "output_dir": "/mnt/fs4/lampinen/arithmetic_abstraction/with_homm_optimization_faster/",
+            "output_dir": output_dir,
             "filename_prefix": "condition-{}_run-{}_".format(condition, run_i),
             "turn_off_arithmetic_optimization": turn_off_arithmetic_optimization,
+            "dataset_max_int": max_int,
+            "dataset_holdouts_per": dataset_holdouts_per,
 #            "min_learning_rate": 1e-7,
 #            "min_meta_learning_rate": 5e-7,
+            "num_epochs": num_epochs,
             "train_meta": train_meta
         })
         model = arithmetic_HoMM(config=this_config) 
@@ -1055,18 +1075,22 @@ if __name__ == "__main__":
             model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
             continue
         
-#        if condition not in "untrained":
-#            model.run_training(dataset=dataset, functions_to_skip=["^"])
-#        else:
-#            model.initialize_training(dataset=dataset)
-#
-#        model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
+        if condition not in "untrained":
+            model.run_training(dataset=dataset, functions_to_skip=["^"])
+        else:
+            model.initialize_training(dataset=dataset)
+
+        model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
 
         if condition not in ["train_exp_only", "meta_map_curriculum", "curriculum"]:
-            model.guess_embeddings_and_optimize(dataset=dataset, target_functions=["^"], initialize_optimization=True)
+            model.guess_embeddings_and_optimize(
+                dataset=dataset, target_functions=["^"],
+                initialize_optimization=True, num_optimization_epochs=5000)
 
         if condition in ["meta_map_curriculum"]:
-            model.guess_embeddings_and_train(dataset=dataset, target_functions=["^"], initialize_training=True)
+            model.guess_embeddings_and_train(
+                dataset=dataset, initialize_training=True,
+                num_optimization_epochs=5000)
         
         model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "final_parameters")
         tf.reset_default_graph()
