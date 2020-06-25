@@ -1010,7 +1010,7 @@ class arithmetic_HoMM(object):
                 functions_to_skip = [x for x in self.functions if x not in target_functions]
             else:
                 functions_to_skip = None
-            model.run_training(dataset=dataset, functions_to_skip=functions_to_sip, initialize_training=initialize_training)
+            model.run_training(dataset=dataset, functions_to_skip=functions_to_skip, initialize_training=initialize_training)
 
 
 
