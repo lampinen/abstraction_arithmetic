@@ -907,7 +907,7 @@ class arithmetic_HoMM(object):
         eval_every = self.config["eval_every"]
         train_meta = self.config["train_meta"]
 
-        self.do_eval(dataset, epoch=0)
+        self.do_eval(dataset, epoch=0, output_filename=output_filename)
         for epoch_i in range(1, num_epochs + 1):
             for fun in self.functions:
                 if fun in functions_to_skip:  # for curriculum purposes, etc
@@ -1009,17 +1009,21 @@ class arithmetic_HoMM(object):
             if target_functions is not None:
                 functions_to_skip = [x for x in self.functions if x not in target_functions]
             else:
-                functions_to_skip = None
-            model.run_training(dataset=dataset, functions_to_skip=functions_to_skip, initialize_training=initialize_training)
+                functions_to_skip = [] 
+            model.run_training(
+                dataset=dataset, functions_to_skip=functions_to_skip,
+                initialize_training=initialize_training,
+                output_filename=out_filename, num_epochs=num_optimization_epochs)
 
 
 
 if __name__ == "__main__":
     #### config
+    restore_parameters = True
     run_offset = 0
     num_runs = 5
     output_dir = "/mnt/fs4/lampinen/arithmetic_abstraction/with_homm_larger/"
-    condition = "full_train"  # meta_map: learn all but exp with "up" mapping,
+    condition = "meta_map_curriculum"  # meta_map: learn all but exp with "up" mapping,
                              #           meta-map to exp and optimize exp task
                              #           task embedding
                              # meta_map_curriculum: as above, except full train
@@ -1071,24 +1075,27 @@ if __name__ == "__main__":
             "train_meta": train_meta
         })
         model = arithmetic_HoMM(config=this_config) 
-        if condition == "train_exp_only":
-            model.run_training(dataset=dataset, functions_to_skip=[x for x in dataset["functions"] if x != "^"])
-            model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
-            continue
-
-        if condition == "full_train":
-            model.run_training(dataset=dataset, functions_to_skip=[])
-            model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
-            continue
-        
-        if condition not in "untrained":
-            model.run_training(dataset=dataset, functions_to_skip=["^"])
+        if restore_parameters:
+            model.restore_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
         else:
-            model.initialize_training(dataset=dataset)
+            if condition == "train_exp_only":
+                model.run_training(dataset=dataset, functions_to_skip=[x for x in dataset["functions"] if x != "^"])
+                model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
+                continue
 
-        model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
+            if condition == "full_train":
+                model.run_training(dataset=dataset, functions_to_skip=[])
+                model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
+                continue
+            
+            if condition not in "untrained":
+                model.run_training(dataset=dataset, functions_to_skip=["^"])
+            else:
+                model.initialize_training(dataset=dataset)
 
-        if condition not in ["train_exp_only", "meta_map_curriculum", "curriculum"]:
+            model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
+
+        if condition in ["meta_map"]:
             model.guess_embeddings_and_optimize(
                 dataset=dataset, target_functions=["^"],
                 initialize_optimization=True, num_optimization_epochs=5000)
