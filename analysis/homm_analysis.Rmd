@@ -1,0 +1,188 @@
+---
+title: "arithmetic HoMM analysis"
+author: "Andrew Lampinen"
+date: "June 18, 2020"
+output: html_document
+---
+
+```{r}
+library(lme4)
+library(lmerTest)
+library(tidyverse)
+```
+
+# data loading
+
+```{r}
+theme_set(theme_classic())
+```
+
+# data loading
+
+```{r}
+data_path = "./data/with_homm_larger/"
+file_list = list.files(data_path, pattern="losses")
+d = replicate(length(file_list), data.frame())
+
+i = 1
+for (f in file_list) {
+   this_d = read.csv(paste(data_path, f, sep=""))
+   this_d$filename = f
+   d[[i]] = this_d
+   i = i + 1
+}
+d = bind_rows(d)
+```
+
+# data manipulation
+
+```{r}
+d = d %>%
+  pivot_longer(-c(epoch, filename), names_to="metric") %>%
+  separate(metric, c("operation", "computation", "train_or_test", "metric"), sep="\\.") %>%
+  mutate(train_or_test = ifelse(operation == "up", computation, train_or_test),
+         computation = ifelse(operation == "up", "meta_map", computation),
+         condition = str_extract(filename, "(?<=condition-)[a-z0-9_]+(?=_run)"),
+         run = as.numeric(str_extract(filename, "(?<=run-)[0-9]+")),
+         phase = case_when(grepl("opt_losses", filename) ~ "optimization", 
+                           grepl("phase2", filename) ~ "later_learning", 
+                           T ~ "initial_learning"),
+         guesstype = str_extract(filename, "(?<=guesstype-)[a-z0-9_]+(?=_(opt|phase2)_losses)"),
+         guesstype_inclusive = ifelse(is.na(guesstype), "random", guesstype),
+         accuracy = grepl("accuracy", metric))
+
+```
+
+# basic plots
+
+```{r}
+ggplot(data=d %>%
+         filter(accuracy,
+                condition == "meta_map_curriculum",
+                phase == "initial_learning"),
+       aes(x=epoch,
+           y=value,
+           color=operation, linetype=computation)) +
+  facet_grid(train_or_test ~ operation) +
+  geom_line(stat="summary",
+            fun.y="mean")
+
+```
+
+
+```{r}
+ggplot(data=d %>%
+         filter(!accuracy,
+                condition == "meta_map_curriculum",
+                phase == "initial_learning",
+                operation == "up"),
+       aes(x=epoch,
+           y=value,
+           color=train_or_test)) +
+  geom_line(stat="summary",
+            fun.y="mean")
+
+```
+
+
+# different starting points for learning exponentiation
+
+
+```{r}
+ggplot(data=d %>%
+         filter(accuracy,
+                phase %in% c("optimization", "later_learning"),
+                operation == "exponentiation"),
+       aes(x=epoch,
+           y=value,
+           color=condition, linetype=guesstype)) +
+  facet_grid(train_or_test ~ computation) +
+  geom_line(stat="summary",
+            fun.y="mean")
+
+```
+
+
+
+
+```{r}
+ggplot(data=d %>%
+         filter(accuracy,
+                guesstype_inclusive %in% c("meta_mapping", "centroid"),
+                (condition %in% c("train_exp_only", "full_train")) | (!(condition %in% c("train_exp_only", "full_train")) & phase != "initial_learning"),
+                operation == "exponentiation"),
+       aes(x=epoch,
+           y=value,
+           color=condition, 
+           linetype=guesstype_inclusive)) +
+  facet_grid(train_or_test ~ computation) +
+  geom_line(stat="summary",
+            fun.y="mean")
+
+```
+
+```{r}
+ggplot(data=d %>%
+         filter(accuracy,
+                condition == "meta_map_curriculum",
+                operation == "exponentiation"),
+       aes(x=epoch,
+           y=value,
+           color=guesstype_inclusive, 
+           linetype=guesstype_inclusive)) +
+  facet_grid(train_or_test ~ computation) +
+  geom_line(stat="summary",
+            fun.y="mean")
+
+```
+
+
+# New evaluation with expand final output accuracy
+
+```{r}
+file_list = list.files(data_path, pattern="new_eval")
+new_eval_d = replicate(length(file_list), data.frame())
+
+i = 1
+for (f in file_list) {
+   this_d = read.csv(paste(data_path, f, sep=""))
+   this_d$filename = f
+   new_eval_d[[i]] = this_d
+   i = i + 1
+}
+new_eval_d = bind_rows(new_eval_d)
+```
+
+```{r}
+new_eval_d = new_eval_d %>%
+  pivot_longer(-c(epoch, filename), names_to="metric") %>%
+  separate(metric, c("operation", "computation", "train_or_test", "metric"), sep="\\.") %>%
+  mutate(train_or_test = ifelse(operation == "up", computation, train_or_test),
+         computation = ifelse(operation == "up", "meta_map", computation),
+         condition = str_extract(filename, "(?<=condition-)[a-z0-9_]+(?=_run)"),
+         run = as.numeric(str_extract(filename, "(?<=run-)[0-9]+")),
+         phase = "new_eval",
+         accuracy = grepl("accuracy", metric))
+
+```
+
+```{r}
+ggplot(data=new_eval_d %>%
+         filter(accuracy,
+                train_or_test == "test",
+                metric %in% c("evaluate_accuracy", "expand_final_output_accuracy"),
+                operation == "exponentiation"),
+       aes(x=computation,
+           y=value,
+           fill=condition)) +
+  geom_bar(stat="summary",
+            fun.y="mean",
+           position="dodge") +
+  geom_errorbar(stat="summary",
+                fun.y="mean_cl_boot",
+                position=position_dodge(0.9),
+                width=0.5) +
+  labs(y="Final output accuracy")
+
+```
+
