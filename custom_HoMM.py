@@ -570,18 +570,45 @@ class arithmetic_HoMM(object):
             targets=self.expand_output_targets_ph,
             mask=self.expand_output_targets_mask_ph)
 
+
+
+
+        # last output of sequence
+        steps_included = tf.reduce_any(self.expand_output_targets_mask_ph, axis=-1)  # which steps of expander are used for each item
+        self.final_outputs_indices = tf.map_fn(
+            fn = lambda x: tf.where(x)[-1, 0], 
+            elems=steps_included,
+            dtype=tf.int64)
+        gathered_outputs = tf.gather(expander_output_outputs, self.final_outputs_indices, axis=1)
+        gathered_targets = tf.gather(self.expand_output_targets_ph, self.final_outputs_indices, axis=1)
+        gathered_oh_targets = tf.gather(oh_exp_out_target, self.final_outputs_indices, axis=1)
+        gathered_masks = tf.gather(self.expand_output_targets_mask_ph, self.final_outputs_indices, axis=1)
+
+        self.expand_final_output_loss = masked_xe_loss(logits=gathered_outputs,
+                                                       targets=gathered_oh_targets,
+                                                       mask=gathered_masks)
+        self.total_expand_final_output_loss = tf.reduce_mean(self.expand_final_output_loss)
+        self.total_expand_final_output_accuracy = get_accuracy(
+            outputs=gathered_outputs,
+            targets=gathered_targets,
+            mask=gathered_masks)
+
         self.expand_fun_loss = masked_mse_loss(outputs=expander_function_embs,
                                                targets=exp_fun_targets,
                                                mask=self.expand_function_targets_mask_ph)
         self.total_expand_fun_loss = tf.reduce_mean(self.expand_fun_loss)
 
         fun_loss_weight = config["expand_function_loss_weight"]
-        self.total_expand_loss = self.total_expand_input_loss + fun_loss_weight * self.total_expand_fun_loss + self.total_expand_output_loss
+        if self.config["expand_only_final"]:  # only train on final output loss
+            self.total_expand_loss = self.total_expand_final_output_loss 
+        else:
+            self.total_expand_loss = self.total_expand_input_loss + fun_loss_weight * self.total_expand_fun_loss + self.total_expand_output_loss
         self.all_expand_losses = {"expand_total_loss": self.total_expand_loss, 
                                   "expand_input_loss": self.total_expand_input_loss,
                                   "expand_function_loss": self.total_expand_fun_loss,
                                   "expand_output_loss": self.total_expand_output_loss,
-                                  "expand_output_accuracy": self.total_expand_output_accuracy}
+                                  "expand_output_accuracy": self.total_expand_output_accuracy,
+                                  "expand_final_output_accuracy": self.total_expand_final_output_accuracy}
 
         self.expand_fed_input_loss = masked_xe_loss(logits=expander_input_outputs,
                                                     targets=oh_exp_in_target,
@@ -597,6 +624,7 @@ class arithmetic_HoMM(object):
                                                    targets=exp_fun_targets,
                                                    mask=self.expand_function_targets_mask_ph)
         self.total_expand_fed_fun_loss = tf.reduce_mean(self.expand_fed_fun_loss)
+
         self.total_expand_fed_loss = self.total_expand_fed_input_loss + fun_loss_weight * self.total_expand_fed_fun_loss + self.total_expand_fed_output_loss
 
         # meta
@@ -1019,11 +1047,11 @@ class arithmetic_HoMM(object):
 
 if __name__ == "__main__":
     #### config
-    restore_parameters = True
+    restore_parameters = False 
     run_offset = 0
     num_runs = 5
     output_dir = "/mnt/fs4/lampinen/arithmetic_abstraction/with_homm_larger/"
-    condition = "meta_map_curriculum"  # meta_map: learn all but exp with "up" mapping,
+    condition = "train_exp_only_final"  # meta_map: learn all but exp with "up" mapping,
                              #           meta-map to exp and optimize exp task
                              #           task embedding
                              # meta_map_curriculum: as above, except full train
@@ -1031,6 +1059,10 @@ if __name__ == "__main__":
                              # untrained: control for meta_map, without initial
                              #            training
                              # train_exp_only: from beginning, learn only exp
+                             # train_exp_only_final: as previous, except
+                             #                       no intermediate supervis.
+                             #                       on expand outputs (control
+                             #                       for compute/params).
                              # full_train: from beginning, learn all 
     
     turn_off_arithmetic_optimization = False  # if True, avoids a bug in TF
@@ -1044,10 +1076,16 @@ if __name__ == "__main__":
     num_epochs = 20000
 
     #### end config
-    if condition in ["train_exp_only", "untrained", "curriculum"]:
+    if condition in ["train_exp_only", "train_exp_only_final", "untrained", "curriculum"]:
         train_meta = False
     else:
         train_meta = True 
+
+    if condition == "train_exp_only_final":
+        expand_only_final = True
+    else:
+        expand_only_final = False
+
     
     for run_i in range(run_offset, run_offset + num_runs):
         print("Running run {} of condition {}".format(run_i, condition))
@@ -1072,28 +1110,32 @@ if __name__ == "__main__":
 #            "min_learning_rate": 1e-7,
 #            "min_meta_learning_rate": 5e-7,
             "num_epochs": num_epochs,
-            "train_meta": train_meta
+            "train_meta": train_meta,
+            "expand_only_final": expand_only_final
         })
         model = arithmetic_HoMM(config=this_config) 
         if restore_parameters:
             model.restore_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
         else:
-            if condition == "train_exp_only":
+            if condition in ["train_exp_only", "train_exp_only_final"]:
                 model.run_training(dataset=dataset, functions_to_skip=[x for x in dataset["functions"] if x != "^"])
                 model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
-                continue
 
-            if condition == "full_train":
+            elif condition == "full_train":
                 model.run_training(dataset=dataset, functions_to_skip=[])
                 model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
-                continue
             
-            if condition not in "untrained":
+            elif condition not in "untrained":
                 model.run_training(dataset=dataset, functions_to_skip=["^"])
             else:
                 model.initialize_training(dataset=dataset)
 
             model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
+
+        # temp, remove
+        model.do_eval(
+            dataset=dataset, epoch=0,
+            output_filename=this_config["output_dir"] + this_config["filename_prefix"] + "new_eval.csv")
 
         if condition in ["meta_map"]:
             model.guess_embeddings_and_optimize(
@@ -1104,6 +1146,7 @@ if __name__ == "__main__":
             model.guess_embeddings_and_train(
                 dataset=dataset, initialize_training=True,
                 num_optimization_epochs=5000)
-        
-        model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "final_parameters")
+
+        if condition in["meta_map", "meta_map_curriculum"]:
+            model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "final_parameters")
         tf.reset_default_graph()
