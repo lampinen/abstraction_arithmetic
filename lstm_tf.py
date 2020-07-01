@@ -5,6 +5,8 @@ import tensorflow.contrib.slim as slim
 
 import arithmetic
 
+from utils import save_config
+
 class lstm_seq2seq_model(object):
     def __init__(self, config): 
         self.config = config
@@ -21,14 +23,7 @@ class lstm_seq2seq_model(object):
                 os.makedirs(output_dir)
             self.output_filename = output_dir + filename_prefix + "accuracies.csv" 
             config_filename = output_dir + filename_prefix + "config.csv"
-            self.save_config(config_filename, config)
-
-    def save_config(self, filename, config):
-        with open(filename, "w") as fout:
-            fout.write("key, value\n")
-            keys = sorted(config.keys())
-            for key in keys:
-                fout.write(key + ", " + str(config[key]) + "\n")
+            save_config(config_filename, config)
 
     def _build_architecture(self):
         internal_nonlinearity = tf.nn.leaky_relu
@@ -64,18 +59,8 @@ class lstm_seq2seq_model(object):
 
                 for i in range(self.config["in_seq_len"]):
                     this_input = embedded_language[:, i, :]
-#?                    this_input = tf.nn.dropout(this_input,
-#?                                               lang_keep_prob_ph)
                     _, state = stacked_cell(this_input, state)
 
-#?                cell_output = tf.nn.dropout(cell_output,
-#?                                            lang_keep_prob_ph)
-#?                language_hidden = slim.fully_connected(
-#?                    cell_output, dimensionality,
-#?                    activation_fn=internal_nonlinearity)
-
-#                language_hidden = tf.nn.dropout(language_hidden,
-#                                                lang_keep_prob_ph)
             return state 
 
         self.encoded_input_state = encoding_network(self.input_ph)
@@ -97,9 +82,10 @@ class lstm_seq2seq_model(object):
 #                                               lang_keep_prob_ph)
                     cell_output, state = stacked_cell(this_input, state)
 
-                    this_output_logits = slim.fully_connected(
-                        cell_output, self.vocab_size,
-                        activation_fn=internal_nonlinearity)
+                    with tf.variable_scope("decoder_fc", reuse=reuse or i > 0):
+                        this_output_logits = slim.fully_connected(
+                            cell_output, self.vocab_size,
+                            activation_fn=internal_nonlinearity)
                     output_logits.append(this_output_logits)
 
                     greedy_output = tf.argmax(this_output_logits, axis=-1)
@@ -114,7 +100,6 @@ class lstm_seq2seq_model(object):
 
         batch_size = tf.shape(self.input_ph)[0]
         self.output_logits = decoding_network(self.encoded_input_state, batch_size)
-
 
         loss = tf.nn.softmax_cross_entropy_with_logits(labels=one_hot_targets, logits=self.output_logits)
 
@@ -254,9 +239,9 @@ def filter_dataset(dataset, key):
 
 
 if __name__ == "__main__":
-    condition = "exp_only"
-    run_offset = 0
-    num_runs = 2
+    condition = "mult_only"
+    run_offset = 5
+    num_runs = 5
     for run_i in range(run_offset, run_offset + num_runs):
         config = {
             "num_layers": 3,  # number of layers in each lstm

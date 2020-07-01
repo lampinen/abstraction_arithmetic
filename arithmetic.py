@@ -50,7 +50,8 @@ def build_dataset(max_int=100,
                   holdouts=["34", "42", "89", "71",
                             "2+3", "4+6", "7+5", "9+8", "43+52", "27+19", "56+33", "14+60",
                             "3*4", "5*2", "7*9", "8*6", "5*16", "4*24", "7*11", "2*33",
-                            "4^3", "2^5", "8^2", "9^1", "1^11"]):
+                            "4^3", "2^5", "8^2", "9^1", "1^11"],
+                  expand=True):
     dataset = {}
     dataset["operations"] = ["number", "addition", "multiplication", "exponentiation"] 
     dataset["vocab_dict"] = VOCAB
@@ -73,7 +74,7 @@ def build_dataset(max_int=100,
         dataset[subset]["targets"].append(encode(str(x)))
         dataset[subset]["operation"].append("number")
         dataset[subset]["evl_or_exp"].append("evaluate")
-        if x <= max_rep_int:
+        if expand and x <= max_rep_int:
             dataset[subset]["inputs"].append([exp_token] + encode(str(x)))
             dataset[subset]["targets"].append(encode(str(x)))
             dataset[subset]["operation"].append("number")
@@ -95,7 +96,7 @@ def build_dataset(max_int=100,
             dataset[subset]["targets"].append(encode(str(x+y)))
             dataset[subset]["operation"].append("addition")
             dataset[subset]["evl_or_exp"].append("evaluate")
-            if y <= max_rep_int:
+            if expand and y <= max_rep_int:
                 dataset[subset]["inputs"].append([exp_token] + in_enc)
                 dataset[subset]["targets"].append(encode(arithmetic_expander(in_str)))
                 dataset[subset]["operation"].append("addition")
@@ -116,7 +117,7 @@ def build_dataset(max_int=100,
             dataset[subset]["targets"].append(encode(str(x*y)))
             dataset[subset]["operation"].append("multiplication")
             dataset[subset]["evl_or_exp"].append("evaluate")
-            if y <= max_rep_int:
+            if expand and y <= max_rep_int:
                 dataset[subset]["inputs"].append([exp_token] + in_enc)
                 dataset[subset]["targets"].append(encode(arithmetic_expander(in_str)))
                 dataset[subset]["operation"].append("multiplication")
@@ -126,6 +127,8 @@ def build_dataset(max_int=100,
         for y in range(max_int):
             if x ** y >= max_int:
                 break
+            if x == 0 and y == 0:
+                continue
             in_str = str(x) + "^" + str(y)
             if in_str in holdouts:
                 subset = "test"
@@ -136,7 +139,7 @@ def build_dataset(max_int=100,
             dataset[subset]["targets"].append([evl_token] + encode(str(x*y)))
             dataset[subset]["operation"].append("exponentiation")
             dataset[subset]["evl_or_exp"].append("evaluate")
-            if y <= max_rep_int:
+            if expand and y <= max_rep_int:
                 dataset[subset]["inputs"].append([exp_token] + in_enc)
                 dataset[subset]["targets"].append([exp_token] + encode(arithmetic_expander(in_str)))
                 dataset[subset]["operation"].append("exponentiation")
