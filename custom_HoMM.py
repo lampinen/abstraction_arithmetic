@@ -478,7 +478,7 @@ class arithmetic_HoMM(object):
 
                 step_output_embs.append(this_step_output_emb)
 
-                this_input = this_step_output_emb 
+                this_input = tf.stop_gradient(this_step_output_emb)
 
             step_input_embs = tf.stack(step_input_embs, axis=1)
             step_function_embs = tf.stack(step_function_embs, axis=1)
@@ -1050,8 +1050,9 @@ if __name__ == "__main__":
     restore_parameters = False 
     run_offset = 0
     num_runs = 5
-    output_dir = "/mnt/fs4/lampinen/arithmetic_abstraction/with_homm_larger/"
-    condition = "train_exp_only_final"  # meta_map: learn all but exp with "up" mapping,
+
+    output_dir = "/mnt/fs4/lampinen/arithmetic_abstraction/with_homm_larger_fixed/"
+    condition = "meta_map_curriculum"  # meta_map: learn all but exp with "up" mapping,
                              #           meta-map to exp and optimize exp task
                              #           task embedding
                              # meta_map_curriculum: as above, except full train
@@ -1131,11 +1132,6 @@ if __name__ == "__main__":
                 model.initialize_training(dataset=dataset)
 
             model.save_parameters(this_config["output_dir"] + this_config["filename_prefix"] + "first_phase_parameters")
-
-        # temp, remove
-        model.do_eval(
-            dataset=dataset, epoch=0,
-            output_filename=this_config["output_dir"] + this_config["filename_prefix"] + "new_eval.csv")
 
         if condition in ["meta_map"]:
             model.guess_embeddings_and_optimize(
